@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
+    <title>Workbook Preview</title>
+    <link
+        rel="stylesheet"
+        href="{{ url_for('static', filename='style.css') }}"
+    >
+</head>
+
+<body>
+    <main class="container results-container">
+        <section class="card">
+            <h1>Workbook Preview</h1>
+
+            <p>
+                File:
+                <strong>{{ filename }}</strong>
+            </p>
+
+            <div class="success-message">
+                The Excel workbook was loaded successfully.
+            </div>
+
+            <h2>Tutors</h2>
+
+            <div class="table-wrapper">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Tutor Name</th>
+                            <th>Seniority</th>
+                            <th>First Choice</th>
+                            <th>Second Choice</th>
+                            <th>Third Choice</th>
+                        </tr>
+                    </thead>
+
+                    <tbody>
+                        {% for tutor in tutors %}
+                            <tr>
+                                <td>{{ tutor["Tutor Name"] }}</td>
+                                <td>{{ tutor["Seniority"] }}</td>
+                                <td>{{ tutor["First Choice"] }}</td>
+                                <td>{{ tutor["Second Choice"] }}</td>
+                                <td>{{ tutor["Third Choice"] }}</td>
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+
+            <h2>Classes</h2>
+
+            <div class="table-wrapper">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Class Name</th>
+                        </tr>
+                    </thead>
+
+                    <tbody>
+                        {% for class_item in classes %}
+                            <tr>
+                                <td>{{ class_item["Class Name"] }}</td>
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+
+            <section class="algorithm-status">
+                <h2>Assignments</h2>
+
+                <p>
+                    The workbook is valid. Assignment generation
+                    will be connected after the algorithm is finalized.
+                </p>
+
+                <button type="button" disabled>
+                    Generate Assignments
+                </button>
+            </section>
+
+            <a
+                class="secondary-link"
+                href="{{ url_for('index') }}"
+            >
+                Upload another workbook
+            </a>
+        </section>
+    </main>
+</body>
+</html>
