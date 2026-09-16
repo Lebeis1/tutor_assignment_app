@@ -1,0 +1,140 @@
+* {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    background-color: #f3f5f7;
+    color: #1f2933;
+    font-family: Arial, Helvetica, sans-serif;
+}
+
+.container {
+    width: min(700px, 92%);
+    margin: 60px auto;
+}
+
+.results-container {
+    width: min(1100px, 94%);
+}
+
+.card {
+    padding: 32px;
+    background-color: white;
+    border: 1px solid #d9dee3;
+    border-radius: 8px;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.08);
+}
+
+h1 {
+    margin-top: 0;
+    color: #17365d;
+}
+
+h2 {
+    margin-top: 32px;
+}
+
+.introduction {
+    margin-bottom: 28px;
+    color: #52606d;
+}
+
+form {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+
+label {
+    font-weight: bold;
+}
+
+input[type="file"] {
+    padding: 12px;
+    border: 1px solid #bcccdc;
+    border-radius: 5px;
+    background-color: #f8fafc;
+}
+
+button {
+    width: fit-content;
+    padding: 11px 18px;
+    border: 0;
+    border-radius: 5px;
+    background-color: #17365d;
+    color: white;
+    font-size: 1rem;
+    cursor: pointer;
+}
+
+button:hover {
+    background-color: #244f7d;
+}
+
+button:disabled {
+    background-color: #9aa5b1;
+    cursor: not-allowed;
+}
+
+.file-requirement {
+    margin-bottom: 0;
+    color: #7b8794;
+    font-size: 0.9rem;
+}
+
+.error-message,
+.success-message {
+    margin: 18px 0;
+    padding: 12px;
+    border-radius: 5px;
+}
+
+.error-message {
+    border: 1px solid #d64545;
+    background-color: #fff1f1;
+    color: #a61b1b;
+}
+
+.success-message {
+    border: 1px solid #2f855a;
+    background-color: #edfdf3;
+    color: #256b48;
+}
+
+.table-wrapper {
+    overflow-x: auto;
+}
+
+table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+th,
+td {
+    padding: 11px;
+    border: 1px solid #d9dee3;
+    text-align: left;
+}
+
+th {
+    background-color: #17365d;
+    color: white;
+}
+
+tbody tr:nth-child(even) {
+    background-color: #eef4f8;
+}
+
+.algorithm-status {
+    margin-top: 32px;
+    padding-top: 4px;
+    border-top: 1px solid #d9dee3;
+}
+
+.secondary-link {
+    display: inline-block;
+    margin-top: 28px;
+    color: #17365d;
+}
