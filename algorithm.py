@@ -1,50 +1,44 @@
-from collections import deque
 from pathlib import Path
 
 from excel_handler import load_excel_file
 
 
+PREFERENCE_COLUMNS = ["First Choice", "Second Choice", "Third Choice"]
+
+# Points awarded for landing a tutor on their Nth choice.
+# Index 0 -> first choice, index 1 -> second choice, index 2 -> third choice.
+PREFERENCE_SCORES = [3, 2, 1]
+
+# Used ONLY to break ties between complete assignments that already have
+# the exact same total preference score. Seniority can never cause a
+# lower-scoring assignment to be chosen over a higher-scoring one.
 SENIORITY_RANK = {
     "Lead": 3,
     "Returning": 2,
     "New": 1,
 }
 
-PREFERENCE_COLUMNS = [
-    "First Choice",
-    "Second Choice",
-    "Third Choice",
-]
-
 
 def validate_algorithm_input(tutors, classes):
-    """Validate the data required by the one-to-one algorithm."""
+    """Validate the data required by the brute-force algorithm."""
 
     if len(tutors) != len(classes):
         raise ValueError(
-            "The one-to-one algorithm requires the same number "
-            "of tutors and classes."
+            "This algorithm requires the same number of tutors and classes, "
+            "since every class must end up filled and every tutor assigned."
         )
 
     if tutors["Tutor Name"].duplicated().any():
         duplicate_names = tutors.loc[
-            tutors["Tutor Name"].duplicated(keep=False),
-            "Tutor Name",
+            tutors["Tutor Name"].duplicated(keep=False), "Tutor Name"
         ].tolist()
-
-        raise ValueError(
-            f"Tutor names must be unique. Duplicates: {duplicate_names}"
-        )
+        raise ValueError(f"Tutor names must be unique. Duplicates: {duplicate_names}")
 
     if classes["Class Name"].duplicated().any():
         duplicate_classes = classes.loc[
-            classes["Class Name"].duplicated(keep=False),
-            "Class Name",
+            classes["Class Name"].duplicated(keep=False), "Class Name"
         ].tolist()
-
-        raise ValueError(
-            f"Class names must be unique. Duplicates: {duplicate_classes}"
-        )
+        raise ValueError(f"Class names must be unique. Duplicates: {duplicate_classes}")
 
     valid_classes = set(classes["Class Name"])
 
@@ -54,284 +48,188 @@ def validate_algorithm_input(tutors, classes):
 
         if seniority not in SENIORITY_RANK:
             raise ValueError(
-                f"{tutor_name} has invalid seniority: {seniority}"
+                f"{tutor_name} has an unrecognized seniority: {seniority!r}. "
+                f"Expected one of: {list(SENIORITY_RANK)}."
             )
 
-        preferences = [
-            tutor[column]
-            for column in PREFERENCE_COLUMNS
-        ]
+        preferences = [tutor[column] for column in PREFERENCE_COLUMNS]
 
         if len(set(preferences)) != len(preferences):
-            raise ValueError(
-                f"{tutor_name} has duplicate class preferences."
-            )
+            raise ValueError(f"{tutor_name} has duplicate class preferences.")
 
         invalid_choices = [
-            choice
-            for choice in preferences
-            if choice not in valid_classes
+            choice for choice in preferences if choice not in valid_classes
         ]
 
         if invalid_choices:
             raise ValueError(
-                f"{tutor_name} selected classes that do not exist: "
-                f"{invalid_choices}"
+                f"{tutor_name} selected classes that do not exist: {invalid_choices}"
             )
 
 
-def class_prefers_new_tutor(
-    new_tutor,
-    current_tutor,
-    tutor_data,
-    next_proposal,
-):
+def brute_force_match(tutors, classes, show_trace=False):
     """
-    Determine whether a class should accept the new tutor.
+    Find the complete tutor-to-class assignment with the highest total
+    preference score, using ONLY each tutor's own top-3 choices.
 
-    Priority:
-    1. Tutor with fewer remaining scheduling options
-    2. Tutor with higher seniority
-    3. Current tutor remains when both are equal
-    """
-    new_remaining_options = (
-        len(tutor_data[new_tutor]["Preferences"])
-        - next_proposal[new_tutor]
-    )
+    Every tutor ends up assigned and every class ends up filled. A tutor
+    is never placed in a class they did not choose — if giving one
+    tutor their preferred choice would force a conflict, the algorithm
+    instead tries giving that tutor a lower choice so everyone can be
+    placed, and keeps whichever complete combination scores highest
+    overall.
 
-    current_remaining_options = (
-        len(tutor_data[current_tutor]["Preferences"])
-        - next_proposal[current_tutor]
-    )
+    Seniority is a tie-breaker ONLY. If two or more complete assignments
+    tie for the highest possible preference score, the one where more
+    senior tutors landed on their better choices wins. Seniority never
+    outweighs preference score — a Lead tutor cannot bump a New tutor
+    out of a better assignment unless the total score stays exactly
+    the same either way.
 
-    # A tutor with fewer remaining choices has greater urgency.
-    if new_remaining_options != current_remaining_options:
-        return new_remaining_options < current_remaining_options
-
-    # If urgency is equal, compare seniority.
-    new_seniority = tutor_data[new_tutor]["Seniority"]
-    current_seniority = tutor_data[current_tutor]["Seniority"]
-
-    new_rank = SENIORITY_RANK[new_seniority]
-    current_rank = SENIORITY_RANK[current_seniority]
-
-    if new_rank != current_rank:
-        return new_rank > current_rank
-
-    # If both factors are equal, keep the current tutor.
-    return False
-
-
-def gale_shapley(tutors, classes, show_trace=False):
-    """
-    Match tutors and classes using modified one-to-one Gale-Shapley.
-
-    Tutors propose in preference order. Classes consider remaining
-    options first and seniority second.
+    This is a brute-force/backtracking search: for each tutor, in turn,
+    it tries "assign to choice 1", "assign to choice 2", "assign to
+    choice 3" (whichever are still available), recursing into every
+    combination and remembering the best result seen so far. The
+    branching factor per tutor is at most 3, so this stays far cheaper
+    than trying every permutation of every class, and comfortably
+    handles the class sizes an MVP like this targets.
     """
     validate_algorithm_input(tutors, classes)
 
-    tutor_data = {}
+    tutor_names = list(tutors["Tutor Name"])
 
-    for _, tutor in tutors.iterrows():
-        tutor_name = tutor["Tutor Name"]
+    tutor_preferences = {
+        tutor["Tutor Name"]: [tutor[column] for column in PREFERENCE_COLUMNS]
+        for _, tutor in tutors.iterrows()
+    }
 
-        tutor_data[tutor_name] = {
-            "Seniority": tutor["Seniority"],
-            "Preferences": [
-                tutor["First Choice"],
-                tutor["Second Choice"],
-                tutor["Third Choice"],
-            ],
+    tutor_seniority_rank = {
+        tutor["Tutor Name"]: SENIORITY_RANK[tutor["Seniority"]]
+        for _, tutor in tutors.iterrows()
+    }
+
+    # best["key"] is (total_preference_score, total_seniority_score).
+    # Python compares tuples left-to-right, so preference score always
+    # decides first, and seniority only breaks an exact tie on it.
+    best = {"key": (-1, -1), "assignment": None}
+
+    def backtrack(
+        index,
+        used_classes,
+        current_assignment,
+        current_score,
+        current_seniority_score,
+    ):
+        if index == len(tutor_names):
+            current_key = (current_score, current_seniority_score)
+
+            if current_key > best["key"]:
+                best["key"] = current_key
+                best["assignment"] = dict(current_assignment)
+
+            return
+
+        tutor_name = tutor_names[index]
+        preferences = tutor_preferences[tutor_name]
+        seniority_rank = tutor_seniority_rank[tutor_name]
+
+        for choice_index, class_name in enumerate(preferences):
+            if class_name in used_classes:
+                continue
+
+            used_classes.add(class_name)
+            current_assignment[tutor_name] = class_name
+
+            if show_trace:
+                print(f"{tutor_name} -> {class_name} (choice {choice_index + 1})")
+
+            preference_points = PREFERENCE_SCORES[choice_index]
+
+            backtrack(
+                index + 1,
+                used_classes,
+                current_assignment,
+                current_score + preference_points,
+                current_seniority_score + seniority_rank * preference_points,
+            )
+
+            used_classes.remove(class_name)
+            del current_assignment[tutor_name]
+
+    backtrack(0, set(), {}, 0, 0)
+
+    if best["assignment"] is None:
+        all_preferences = {
+            class_name
+            for preferences in tutor_preferences.values()
+            for class_name in preferences
         }
 
-    class_names = list(classes["Class Name"])
+        unwanted_classes = [
+            class_name
+            for class_name in classes["Class Name"]
+            if class_name not in all_preferences
+        ]
 
-    class_matches = {
-        class_name: None
-        for class_name in class_names
-    }
-
-    tutor_matches = {
-        tutor_name: None
-        for tutor_name in tutor_data
-    }
-
-    next_proposal = {
-        tutor_name: 0
-        for tutor_name in tutor_data
-    }
-
-    free_tutors = deque(tutor_data.keys())
-
-    if show_trace:
-        print("\nProposal Trace")
-        print("=" * 75)
-
-    while free_tutors:
-        tutor_name = free_tutors.popleft()
-        preferences = tutor_data[tutor_name]["Preferences"]
-        preference_index = next_proposal[tutor_name]
-
-        if preference_index >= len(preferences):
-            if show_trace:
-                print(
-                    f"{tutor_name} has exhausted all preferences."
-                )
-            continue
-
-        proposed_class = preferences[preference_index]
-
-        if show_trace:
-            print(
-                f"\n{tutor_name} proposes to {proposed_class} "
-                f"(choice {preference_index + 1})."
+        if unwanted_classes:
+            raise ValueError(
+                "No complete assignment is possible because these classes "
+                f"were not chosen by any tutor: {unwanted_classes}. "
+                "Every class needs at least one tutor who listed it as a "
+                "choice, or it can never be filled."
             )
 
-        next_proposal[tutor_name] += 1
-        current_tutor = class_matches[proposed_class]
-
-        if current_tutor is None:
-            class_matches[proposed_class] = tutor_name
-            tutor_matches[tutor_name] = proposed_class
-
-            if show_trace:
-                print(
-                    f"  {proposed_class} is available and "
-                    f"accepts {tutor_name}."
-                )
-
-            continue
-
-        new_remaining = (
-            len(tutor_data[tutor_name]["Preferences"])
-            - next_proposal[tutor_name]
-        )
-
-        current_remaining = (
-            len(tutor_data[current_tutor]["Preferences"])
-            - next_proposal[current_tutor]
-        )
-
-        if show_trace:
-            print(
-                f"  {proposed_class} currently has "
-                f"{current_tutor}."
-            )
-            print(
-                f"  {tutor_name}: "
-                f"{new_remaining} untried choices, "
-                f"{tutor_data[tutor_name]['Seniority']}."
-            )
-            print(
-                f"  {current_tutor}: "
-                f"{current_remaining} untried choices, "
-                f"{tutor_data[current_tutor]['Seniority']}."
-            )
-
-        if class_prefers_new_tutor(
-            tutor_name,
-            current_tutor,
-            tutor_data,
-            next_proposal,
-        ):
-            class_matches[proposed_class] = tutor_name
-            tutor_matches[tutor_name] = proposed_class
-
-            tutor_matches[current_tutor] = None
-            free_tutors.append(current_tutor)
-
-            if show_trace:
-                print(
-                    f"  {proposed_class} accepts {tutor_name} "
-                    f"and rejects {current_tutor}."
-                )
-
-        else:
-            free_tutors.append(tutor_name)
-
-            if show_trace:
-                print(
-                    f"  {proposed_class} keeps {current_tutor} "
-                    f"and rejects {tutor_name}."
-                )
-
-    if show_trace:
-        print("\n" + "=" * 75)
-        print("Proposal process complete.")
-
-    unmatched_tutors = [
-        tutor_name
-        for tutor_name, class_name in tutor_matches.items()
-        if class_name is None
-    ]
-
-    unfilled_classes = [
-        class_name
-        for class_name, tutor_name in class_matches.items()
-        if tutor_name is None
-    ]
-
-    if unmatched_tutors or unfilled_classes:
         raise ValueError(
-            "A complete one-to-one matching was not possible. "
-            f"Unmatched tutors: {unmatched_tutors}. "
-            f"Unfilled classes: {unfilled_classes}."
+            "No complete assignment is possible using only tutors' top-3 "
+            "choices. Check for classes that too few tutors selected "
+            "relative to how many other tutors are competing for them."
         )
 
     results = []
 
-    for tutor_name, class_name in tutor_matches.items():
-        tutor = tutor_data[tutor_name]
-
+    for tutor_name, assigned_class in best["assignment"].items():
         preference_number = (
-            tutor["Preferences"].index(class_name) + 1
+            tutor_preferences[tutor_name].index(assigned_class) + 1
         )
 
         results.append(
             {
                 "Tutor Name": tutor_name,
-                "Seniority": tutor["Seniority"],
-                "Assigned Class": class_name,
+                "Assigned Class": assigned_class,
                 "Preference Number": preference_number,
             }
         )
 
     results.sort(key=lambda result: result["Tutor Name"])
 
-    return results
+    total_preference_score, _ = best["key"]
+
+    return results, total_preference_score
 
 
 if __name__ == "__main__":
     project_folder = Path(__file__).parent
 
-    sample_file = (
-        project_folder
-        / "sample_data"
-        / "sample.xlsx"
-    )
+    sample_file = project_folder / "sample_data" / "sample.xlsx"
 
     try:
         tutors_data, classes_data = load_excel_file(sample_file)
 
-        assignments = gale_shapley(
-            tutors_data,
-            classes_data,
-        )
+        assignments, total_score = brute_force_match(tutors_data, classes_data)
 
-        print("\nGale-Shapley Tutor Assignments")
+        print("\nBrute-Force Tutor Assignments")
         print("=" * 75)
 
         for assignment in assignments:
             print(
-                f"{assignment['Tutor Name']} "
-                f"({assignment['Seniority']}) -> "
+                f"{assignment['Tutor Name']} -> "
                 f"{assignment['Assigned Class']} "
                 f"[Choice {assignment['Preference Number']}]"
             )
 
         print("=" * 75)
         print(f"Total assignments: {len(assignments)}")
+        print(f"Total preference score: {total_score}")
 
     except (FileNotFoundError, ValueError, KeyError) as error:
         print(f"Error: {error}")
