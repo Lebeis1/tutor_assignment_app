@@ -86,7 +86,7 @@ if __name__ == "__main__":
     sample_file = (
         project_folder
         / "sample_data"
-        / "sample.xlsx"
+        / "sample_40_tutors.xlsx"
     )
 
     tutors_data, classes_data = load_excel_file(sample_file)
