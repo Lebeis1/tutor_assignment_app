@@ -1,12 +1,20 @@
 from pathlib import Path
 
-from real_excel_handler import load_real_choices, TIER_FILL_PRIORITY
+from real_excel_handler import (
+    TIER_FILL_PRIORITY,
+    load_real_choices,
+    load_tutor_info,
+    tutor_names_from_classes,
+)
 
 
 PREFERENCE_SCORES = {1: 3, 2: 2, 3: 1}
 
-# How many classes a single tutor can be assigned to at once.
-TUTOR_CAPACITY = 2
+# Default cap on how many classes a tutor can be assigned, used for any
+# tutor not given a specific value via tutor_capacity=. Pass a real
+# per-tutor dict once you have one (see real_excel_handler.
+# load_tutor_info) rather than relying on this blanket default.
+DEFAULT_TUTOR_CAPACITY = 2
 
 # Optional. If you have a Lead/Returning/New roster for these tutors,
 # pass it into match_real_choices(..., seniority_rank=your_dict) using
@@ -15,7 +23,9 @@ TUTOR_CAPACITY = 2
 SENIORITY_RANK = {"Lead": 3, "Returning": 2, "New": 1}
 
 
-def match_real_choices_bruteforce(classes, seniority_rank=None, show_trace=False):
+def match_real_choices_bruteforce(
+    classes, seniority_rank=None, tutor_capacity=None, show_trace=False
+):
     """
     Choose which classes get filled and by whom, out of a list of
     classes each with their own small set of candidate tutors (from
@@ -39,10 +49,11 @@ def match_real_choices_bruteforce(classes, seniority_rank=None, show_trace=False
         7. Among ties on all of the above, prefer giving good outcomes
            to more senior tutors (only if seniority_rank is supplied).
 
-    A tutor can fill up to TUTOR_CAPACITY classes (currently 2). A class
-    is only ever filled by one of its own actual candidates - never left
-    empty by choice if a candidate is available AND filling it wouldn't
-    require sacrificing a higher-priority class elsewhere.
+    A tutor can fill up to tutor_capacity[name] classes if given, or
+    DEFAULT_TUTOR_CAPACITY otherwise. A class is only ever filled by one
+    of its own actual candidates - never left empty by choice if a
+    candidate is available AND filling it wouldn't require sacrificing
+    a higher-priority class elsewhere.
 
     This is a brute-force/backtracking search, same approach as
     algorithm.py: try "fill this class with candidate X", "...with
@@ -54,6 +65,8 @@ def match_real_choices_bruteforce(classes, seniority_rank=None, show_trace=False
     """
     if seniority_rank is None:
         seniority_rank = {}
+    if tutor_capacity is None:
+        tutor_capacity = {}
 
     priorities = sorted(set(TIER_FILL_PRIORITY.values()) | {c["tier_priority"] for c in classes})
 
@@ -116,7 +129,7 @@ def match_real_choices_bruteforce(classes, seniority_rank=None, show_trace=False
         tier_priority = class_record["tier_priority"]
 
         for tutor_name, choice_tier in class_record["candidates"]:
-            if tutor_load.get(tutor_name, 0) >= TUTOR_CAPACITY:
+            if tutor_load.get(tutor_name, 0) >= tutor_capacity.get(tutor_name, DEFAULT_TUTOR_CAPACITY):
                 continue
 
             preference_points = PREFERENCE_SCORES[choice_tier]
@@ -189,7 +202,7 @@ def match_real_choices_bruteforce(classes, seniority_rank=None, show_trace=False
     return results, best["key"]
 
 
-def match_real_choices_fast(classes, seniority_rank=None):
+def match_real_choices_fast(classes, seniority_rank=None, tutor_capacity=None, tie_break_seed=None):
     """
     Same priority rules and output as match_real_choices_bruteforce,
     but solved EXACTLY via weighted bipartite matching
@@ -215,12 +228,28 @@ def match_real_choices_fast(classes, seniority_rank=None):
     work so a new tutor gets used" worth more than "give someone their
     2nd class", without making it worth more than filling a
     higher-priority tier.
+
+    tie_break_seed: optional. When two or more fully optimal
+    assignments exist (the SAME tier fills, employed count, preference
+    score, and seniority score, just different specific tutors on some
+    classes), this normally returns whichever one the solver happens to
+    land on first. Passing a seed here adds a microscopic amount of
+    random noise (far too small to ever change a real decision) so a
+    different seed can surface a genuinely different, equally-optimal
+    assignment. See find_alternative_optimal_assignments, which uses
+    this to discover every alternative worth showing a human.
     """
+    import random as _random
+
     import numpy as np
     from scipy.optimize import linear_sum_assignment
 
     if seniority_rank is None:
         seniority_rank = {}
+    if tutor_capacity is None:
+        tutor_capacity = {}
+
+    rng = _random.Random(tie_break_seed) if tie_break_seed is not None else None
 
     num_classes = len(classes)
     priorities = sorted(set(TIER_FILL_PRIORITY.values()) | {c["tier_priority"] for c in classes})
@@ -242,16 +271,17 @@ def match_real_choices_fast(classes, seniority_rank=None):
         tier_weight[p] = running
         running = running * (num_classes + 1)
 
-    # Build the list of tutor "slots" - TUTOR_CAPACITY interchangeable
-    # copies per tutor, each tagged with which capacity slot (0-indexed)
-    # it is - so this becomes an ordinary 1-to-1 assignment problem
-    # between classes and slots, while still knowing which slot is a
-    # tutor's FIRST (the one eligible for the employment bonus).
+    # Build the list of tutor "slots" - tutor_capacity[name] (or
+    # DEFAULT_TUTOR_CAPACITY) interchangeable copies per tutor, each
+    # tagged with which capacity slot (0-indexed) it is - so this
+    # becomes an ordinary 1-to-1 assignment problem between classes and
+    # slots, while still knowing which slot is a tutor's FIRST (the one
+    # eligible for the employment bonus).
     tutor_names = sorted({name for c in classes for name, _ in c["candidates"]})
     slots = [
         (name, slot_number)
         for name in tutor_names
-        for slot_number in range(TUTOR_CAPACITY)
+        for slot_number in range(tutor_capacity.get(name, DEFAULT_TUTOR_CAPACITY))
     ]
     num_slots = len(slots)
 
@@ -280,6 +310,11 @@ def match_real_choices_fast(classes, seniority_rank=None):
                 + preference_points * preference_weight
                 + (rank * preference_points) * seniority_weight
             )
+            if rng is not None:
+                # Microscopic noise (<< 1, the smallest real weight unit)
+                # so it can only ever break an EXACT tie, never change
+                # which outcome is actually better.
+                value += rng.uniform(0, 0.01)
             benefit[row, col] = value
 
     # Any class row paired with any dummy column = "leave unfilled" (0).
@@ -342,6 +377,154 @@ def match_real_choices_fast(classes, seniority_rank=None):
     return results, key
 
 
+def find_alternative_optimal_assignments(
+    classes, seniority_rank=None, tutor_capacity=None, num_attempts=40, related_sections=None
+):
+    """
+    Find every genuinely-tied-for-best tutor for each class, so a human
+    can make the final call wherever more than one option is equally
+    good - rather than silently picking whichever one the solver
+    happened to land on.
+
+    How it works: solve once with NO tie-break noise to get the true
+    optimal key (the baseline). Then solve again many times, each with
+    a different tiny random tie-break seed, which can shuffle WHICH
+    tutor fills a contested class without ever changing the actual
+    optimal key. Any run whose key doesn't exactly match the baseline
+    is discarded (that run's noise accidentally mattered for some
+    other reason, or is otherwise not trustworthy) - so everything kept
+    is a CONFIRMED equally-optimal assignment, not a guess.
+
+    related_sections: optional, from
+    real_excel_handler.find_related_sections(file_path) - a dict of
+    class_id -> group_id for classes that are likely the same course
+    offering (e.g. a lecture and its lab). When a group's classes are
+    ALL contested, and one of the confirmed-optimal alternatives has
+    the SAME tutor covering the whole group, that combination is
+    marked "recommended" - a low-stakes nudge toward keeping a lecture
+    and its lab(s) with one tutor when it costs nothing, while still
+    showing every other equally-valid option (including split ones,
+    since sometimes only one tutor is available for the lab).
+
+    Returns a list of dicts, one per class:
+        {
+            "Class": "PSY 300 E3L",
+            "Tier": "Tier 1 EU",
+            "is_contested": True,
+            "options": [
+                {"Assigned Tutor": "Elizabeth Lanovaya", "Their Choice": 2, "recommended": False},
+                {"Assigned Tutor": "Cassidy Rosenbaum", "Their Choice": 1, "recommended": True},
+            ],
+        }
+    "options" has exactly one entry for a class with no tie, and more
+    than one for a class where multiple tutors are equally valid at the
+    optimum - this is what a results page should show a dropdown for.
+
+    This surfaces alternatives FOUND by the random attempts, which is a
+    practical, honest approach - it is not a mathematical guarantee of
+    finding every possible tied assignment if ties involve complex
+    multi-class swap chains, but num_attempts=40 reliably surfaces the
+    simple single and double swaps that make up the overwhelming
+    majority of real ties. Increase num_attempts for more thoroughness
+    at the cost of more runtime (each attempt is still well under a
+    second).
+    """
+    if seniority_rank is None:
+        seniority_rank = {}
+    if related_sections is None:
+        related_sections = {}
+
+    baseline_results, baseline_key = match_real_choices_fast(classes, seniority_rank, tutor_capacity)
+
+    options_by_class = {
+        r["Class"]: {(r["Assigned Tutor"], r["Their Choice"])}
+        for r in baseline_results
+        if r["Assigned Tutor"] is not None
+    }
+    tier_by_class = {r["Class"]: r["Tier"] for r in baseline_results}
+    unfilled_classes = {r["Class"] for r in baseline_results if r["Assigned Tutor"] is None}
+
+    # Track, for each attempt that matches the baseline key, the full
+    # tutor assigned to every class - needed to check whether a single
+    # attempt kept a whole related-section group with one tutor.
+    confirmed_assignments = [
+        {r["Class"]: r["Assigned Tutor"] for r in baseline_results if r["Assigned Tutor"]}
+    ]
+
+    for seed in range(num_attempts):
+        attempt_results, attempt_key = match_real_choices_fast(
+            classes, seniority_rank, tutor_capacity, tie_break_seed=seed
+        )
+
+        if attempt_key != baseline_key:
+            continue  # this run's noise changed something real - discard it
+
+        confirmed_assignments.append(
+            {r["Class"]: r["Assigned Tutor"] for r in attempt_results if r["Assigned Tutor"]}
+        )
+
+        for r in attempt_results:
+            if r["Assigned Tutor"] is None:
+                continue
+            options_by_class.setdefault(r["Class"], set()).add(
+                (r["Assigned Tutor"], r["Their Choice"])
+            )
+
+    # For each related-section group where every member is contested,
+    # check whether any confirmed assignment kept the whole group with
+    # one tutor - if so, that tutor's option is "recommended" there.
+    group_to_classes = {}
+    for class_id, group_id in related_sections.items():
+        group_to_classes.setdefault(group_id, []).append(class_id)
+
+    recommended_tutor_by_class = {}
+    for group_id, group_class_ids in group_to_classes.items():
+        relevant = [c for c in group_class_ids if c in options_by_class]
+        if len(relevant) < 2:
+            continue  # nothing to coordinate - only matters for groups of 2+
+
+        for assignment in confirmed_assignments:
+            tutors_in_group = {assignment.get(c) for c in relevant}
+            if len(tutors_in_group) == 1 and None not in tutors_in_group:
+                same_tutor = next(iter(tutors_in_group))
+                for c in relevant:
+                    recommended_tutor_by_class[c] = same_tutor
+                break
+
+    results = []
+    for class_id in sorted(set(tier_by_class) | set(unfilled_classes)):
+        if class_id in unfilled_classes and class_id not in options_by_class:
+            results.append(
+                {
+                    "Class": class_id,
+                    "Tier": tier_by_class[class_id],
+                    "is_contested": False,
+                    "options": [],
+                }
+            )
+            continue
+
+        recommended_tutor = recommended_tutor_by_class.get(class_id)
+        options = [
+            {
+                "Assigned Tutor": tutor,
+                "Their Choice": choice,
+                "recommended": tutor == recommended_tutor,
+            }
+            for tutor, choice in sorted(options_by_class[class_id])
+        ]
+        results.append(
+            {
+                "Class": class_id,
+                "Tier": tier_by_class[class_id],
+                "is_contested": len(options) > 1,
+                "options": options,
+            }
+        )
+
+    return results
+
+
 if __name__ == "__main__":
     import sys
 
@@ -353,7 +536,22 @@ if __name__ == "__main__":
         file_path = project_folder / "sample_data" / "real_choices_sample.xlsx"
 
     classes = load_real_choices(file_path)
-    results, key = match_real_choices_fast(classes)
+
+    # Per-tutor Max Classes and Seniority from the "Tutors" sheet, if it
+    # exists and has been filled in. Anything left blank uses defaults.
+    capacities, seniority_labels = load_tutor_info(
+        file_path, known_tutor_names=tutor_names_from_classes(classes)
+    )
+    seniority_rank = {name: SENIORITY_RANK[label] for name, label in seniority_labels.items()}
+    print(
+        f"Tutors sheet: {len(capacities)} Max Classes values and "
+        f"{len(seniority_labels)} Seniority values loaded "
+        f"(blank = default of {DEFAULT_TUTOR_CAPACITY} classes / no seniority tie-break)."
+    )
+
+    results, key = match_real_choices_fast(
+        classes, seniority_rank=seniority_rank, tutor_capacity=capacities
+    )
 
     filled = [r for r in results if r["Assigned Tutor"] is not None]
     unfilled = [r for r in results if r["Assigned Tutor"] is None]
