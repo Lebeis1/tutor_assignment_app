@@ -210,7 +210,7 @@ def brute_force_match(tutors, classes, show_trace=False):
 if __name__ == "__main__":
     project_folder = Path(__file__).parent
 
-    sample_file = project_folder / "sample_data" / "sample.xlsx"
+    sample_file = project_folder / "sample_data" / "sample_40_tutors.xlsx"
 
     try:
         tutors_data, classes_data = load_excel_file(sample_file)
