@@ -22,6 +22,23 @@ DEFAULT_TUTOR_CAPACITY = 2
 # seniority (the sheet itself has no seniority column to read from).
 SENIORITY_RANK = {"Lead": 3, "Returning": 2, "New": 1}
 
+# Classes in this tier are "Canvas Attached Only" by definition, so a
+# tutor's "(CAT)" note is NOT a downside there (see the sheet's legend).
+CAT_ONLY_TIER_LABEL = "CAT Only"
+
+
+def is_cat_placement(class_record, tutor_name):
+    """
+    True when placing this tutor in this class means a Canvas-Attached-
+    only placement that we'd rather avoid: the tutor wrote exactly
+    "(CAT)" for the class, and the class isn't itself a CAT Only class
+    (where every placement is Canvas Attached anyway).
+    """
+    return (
+        class_record["tier_label"] != CAT_ONLY_TIER_LABEL
+        and tutor_name in class_record.get("cat_candidates", ())
+    )
+
 
 def match_real_choices_bruteforce(
     classes, seniority_rank=None, tutor_capacity=None, show_trace=False
@@ -43,10 +60,14 @@ def match_real_choices_bruteforce(
            has at least one valid candidate class gets used at least
            once, even if it means giving them a lower choice, or giving
            another tutor their 2nd class instead of their top pick).
-        6. Among ties on all of the above, maximize total preference
+        6. Use as FEW "(CAT)" placements as possible: when a class can
+           be filled equally well by a tutor who isn't Canvas-Attached-
+           only for it, prefer that tutor. (Not applied to CAT Only
+           classes, which are Canvas Attached by definition.)
+        7. Among ties on all of the above, maximize total preference
            score (how good a choice tier each filled class was for its
            tutor).
-        7. Among ties on all of the above, prefer giving good outcomes
+        8. Among ties on all of the above, prefer giving good outcomes
            to more senior tutors (only if seniority_rank is supplied).
 
     A tutor can fill up to tutor_capacity[name] classes if given, or
@@ -88,14 +109,14 @@ def match_real_choices_bruteforce(
 
     best = {"key": None, "assignment": None}
 
-    def make_key(filled_by_priority, tutor_load, total_score, total_seniority):
+    def make_key(filled_by_priority, tutor_load, non_cat_count, total_score, total_seniority):
         employed_count = len(tutor_load)
         return (
             tuple(filled_by_priority[p] for p in priorities)
-            + (employed_count, total_score, total_seniority)
+            + (employed_count, non_cat_count, total_score, total_seniority)
         )
 
-    def upper_bound_key(index, filled_by_priority, tutor_load, total_score):
+    def upper_bound_key(index, filled_by_priority, tutor_load, non_cat_count, total_score):
         remaining_counts = remaining_by_priority_from[index]
         optimistic_filled = {
             p: filled_by_priority[p] + remaining_counts[p] for p in priorities
@@ -103,23 +124,33 @@ def match_real_choices_bruteforce(
         remaining_classes = len(ordered_classes) - index
         # Best case: every remaining class employs a brand-new tutor.
         optimistic_employed = len(tutor_load) + remaining_classes
+        # Best case: every remaining class is filled without a CAT placement.
+        optimistic_non_cat = non_cat_count + remaining_classes
         optimistic_score = total_score + PREFERENCE_SCORES[1] * remaining_classes
         # Seniority bound is left unbounded since it's a low-stakes
         # tie-breaker only.
         return tuple(optimistic_filled[p] for p in priorities) + (
             optimistic_employed,
+            optimistic_non_cat,
             optimistic_score,
             float("inf"),
         )
 
-    def backtrack(index, tutor_load, filled_by_priority, assignment, total_score, total_seniority):
+    def backtrack(
+        index, tutor_load, filled_by_priority, assignment,
+        non_cat_count, total_score, total_seniority,
+    ):
         if best["key"] is not None:
-            bound = upper_bound_key(index, filled_by_priority, tutor_load, total_score)
+            bound = upper_bound_key(
+                index, filled_by_priority, tutor_load, non_cat_count, total_score
+            )
             if bound < best["key"]:
                 return
 
         if index == len(ordered_classes):
-            key = make_key(filled_by_priority, tutor_load, total_score, total_seniority)
+            key = make_key(
+                filled_by_priority, tutor_load, non_cat_count, total_score, total_seniority
+            )
             if best["key"] is None or key > best["key"]:
                 best["key"] = key
                 best["assignment"] = dict(assignment)
@@ -134,6 +165,7 @@ def match_real_choices_bruteforce(
 
             preference_points = PREFERENCE_SCORES[choice_tier]
             rank = seniority_rank.get(tutor_name, 0)
+            cat_placement = is_cat_placement(class_record, tutor_name)
 
             tutor_load[tutor_name] = tutor_load.get(tutor_name, 0) + 1
             assignment[class_record["class_id"]] = (tutor_name, choice_tier)
@@ -142,7 +174,8 @@ def match_real_choices_bruteforce(
             if show_trace:
                 print(
                     f"{class_record['class_id']} -> {tutor_name} "
-                    f"(their choice {choice_tier}, tier {class_record['tier_label']})"
+                    f"(their choice {choice_tier}, tier {class_record['tier_label']}"
+                    f"{', CAT' if cat_placement else ''})"
                 )
 
             backtrack(
@@ -150,6 +183,7 @@ def match_real_choices_bruteforce(
                 tutor_load,
                 filled_by_priority,
                 assignment,
+                non_cat_count + (0 if cat_placement else 1),
                 total_score + preference_points,
                 total_seniority + rank * preference_points,
             )
@@ -166,12 +200,13 @@ def match_real_choices_bruteforce(
             tutor_load,
             filled_by_priority,
             assignment,
+            non_cat_count,
             total_score,
             total_seniority,
         )
 
     initial_filled = {p: 0 for p in priorities}
-    backtrack(0, {}, initial_filled, {}, 0, 0)
+    backtrack(0, {}, initial_filled, {}, 0, 0, 0)
 
     results = []
     for class_record in ordered_classes:
@@ -184,6 +219,7 @@ def match_real_choices_bruteforce(
                     "Tier": class_record["tier_label"],
                     "Assigned Tutor": None,
                     "Their Choice": None,
+                    "CAT": False,
                 }
             )
         else:
@@ -194,6 +230,7 @@ def match_real_choices_bruteforce(
                     "Tier": class_record["tier_label"],
                     "Assigned Tutor": tutor_name,
                     "Their Choice": choice_tier,
+                    "CAT": is_cat_placement(class_record, tutor_name),
                 }
             )
 
@@ -212,7 +249,8 @@ def match_real_choices_fast(classes, seniority_rank=None, tutor_capacity=None, t
 
     How the priority levels are enforced with a single matching call:
     each level (tier priority, then "every tutor gets used at least
-    once", then preference score, then seniority) gets its own "weight"
+    once", then "avoid (CAT) placements", then preference score, then
+    seniority) gets its own "weight"
     that is deliberately made far larger than the combined maximum
     possible contribution of every level below it. Maximizing total
     weighted benefit then automatically reproduces the exact same hard
@@ -254,22 +292,48 @@ def match_real_choices_fast(classes, seniority_rank=None, tutor_capacity=None, t
     num_classes = len(classes)
     priorities = sorted(set(TIER_FILL_PRIORITY.values()) | {c["tier_priority"] for c in classes})
 
+    tutor_names = sorted({name for c in classes for name, _ in c["candidates"]})
+    num_tutors = len(tutor_names)
+
     # Weight for each level, built from the bottom up so every level
-    # strictly dominates everything below it, however many classes exist.
+    # strictly dominates the MAXIMUM possible combined total of every
+    # level beneath it. That makes "maximize total weight" identical to
+    # comparing the levels one at a time, in order. Each bound uses the
+    # real maximum for that level (e.g. at most num_tutors employed
+    # tutors, at most n_p classes in a tier) rather than a loose
+    # worst-case, which keeps every weight small enough that float64
+    # arithmetic stays exact - important, because the lowest levels
+    # (seniority, the random tie-break noise) are tiny numbers sitting
+    # next to the huge top-tier weights.
     max_seniority_contribution = max(SENIORITY_RANK.values(), default=1) * max(PREFERENCE_SCORES.values())
     max_preference_contribution = max(PREFERENCE_SCORES.values())
 
     seniority_weight = 1
-    preference_weight = (max_seniority_contribution * num_classes + 1) * seniority_weight
-    # "Employ a new tutor" must dominate every possible preference-score
-    # difference across the whole problem (at most 3 points per class).
-    employment_weight = (max_preference_contribution * num_classes + 1) * preference_weight
+    seniority_max_total = max_seniority_contribution * num_classes * seniority_weight
+
+    preference_weight = seniority_max_total + 1
+    preference_max_total = max_preference_contribution * num_classes * preference_weight
+
+    # "Avoid a CAT placement" is a bonus for every filled class that is
+    # NOT a CAT placement. It must outweigh any total preference score.
+    cat_weight = preference_max_total + seniority_max_total + 1
+    cat_max_total = num_classes * cat_weight
+
+    # "Employ a new tutor" must outweigh any total of the levels below.
+    employment_weight = cat_max_total + preference_max_total + seniority_max_total + 1
+    employment_max_total = num_tutors * employment_weight
+
+    below_max = (
+        employment_max_total + cat_max_total + preference_max_total + seniority_max_total
+    )
+    classes_in_priority = {p: 0 for p in priorities}
+    for c in classes:
+        classes_in_priority[c["tier_priority"]] += 1
 
     tier_weight = {}
-    running = (1 * num_classes + 1) * employment_weight  # at most 1 "new employment" per class
     for p in reversed(priorities):  # build from LEAST urgent up to MOST urgent
-        tier_weight[p] = running
-        running = running * (num_classes + 1)
+        tier_weight[p] = below_max + 1
+        below_max += classes_in_priority[p] * tier_weight[p]
 
     # Build the list of tutor "slots" - tutor_capacity[name] (or
     # DEFAULT_TUTOR_CAPACITY) interchangeable copies per tutor, each
@@ -277,13 +341,18 @@ def match_real_choices_fast(classes, seniority_rank=None, tutor_capacity=None, t
     # becomes an ordinary 1-to-1 assignment problem between classes and
     # slots, while still knowing which slot is a tutor's FIRST (the one
     # eligible for the employment bonus).
-    tutor_names = sorted({name for c in classes for name, _ in c["candidates"]})
     slots = [
         (name, slot_number)
         for name in tutor_names
         for slot_number in range(tutor_capacity.get(name, DEFAULT_TUTOR_CAPACITY))
     ]
     num_slots = len(slots)
+
+    # Float64 holds integers exactly up to 2**53. Fail loudly rather than
+    # return a subtly wrong answer if a future, much larger sheet ever
+    # pushes the top weight past that.
+    if tier_weight[priorities[0]] * 2 >= 2 ** 53:
+        raise ValueError("Problem too large for exact float64 weights.")
 
     # Pad to a square matrix: a dummy column per class (lets a class opt
     # out and stay unfilled) and a dummy row per slot (lets a slot opt
@@ -303,10 +372,12 @@ def match_real_choices_fast(classes, seniority_rank=None, tutor_capacity=None, t
             preference_points = PREFERENCE_SCORES[choice_tier]
             rank = seniority_rank.get(tutor_name, 0)
             employment_bonus = employment_weight if slot_number == 0 else 0
+            non_cat_bonus = 0 if is_cat_placement(class_record, tutor_name) else cat_weight
 
             value = (
                 tier_weight[class_record["tier_priority"]]
                 + employment_bonus
+                + non_cat_bonus
                 + preference_points * preference_weight
                 + (rank * preference_points) * seniority_weight
             )
@@ -314,7 +385,7 @@ def match_real_choices_fast(classes, seniority_rank=None, tutor_capacity=None, t
                 # Microscopic noise (<< 1, the smallest real weight unit)
                 # so it can only ever break an EXACT tie, never change
                 # which outcome is actually better.
-                value += rng.uniform(0, 0.01)
+                value += rng.uniform(0, 0.5 / max(num_classes, 1))
             benefit[row, col] = value
 
     # Any class row paired with any dummy column = "leave unfilled" (0).
@@ -340,6 +411,7 @@ def match_real_choices_fast(classes, seniority_rank=None, tutor_capacity=None, t
     filled_by_priority = {p: 0 for p in priorities}
     total_score = 0
     total_seniority = 0
+    non_cat_count = 0
 
     for class_record in classes:
         entry = assignment.get(class_record["class_id"])
@@ -350,20 +422,25 @@ def match_real_choices_fast(classes, seniority_rank=None, tutor_capacity=None, t
                     "Tier": class_record["tier_label"],
                     "Assigned Tutor": None,
                     "Their Choice": None,
+                    "CAT": False,
                 }
             )
         else:
             tutor_name, choice_tier = entry
             preference_points = PREFERENCE_SCORES[choice_tier]
+            cat_placement = is_cat_placement(class_record, tutor_name)
             filled_by_priority[class_record["tier_priority"]] += 1
             total_score += preference_points
             total_seniority += seniority_rank.get(tutor_name, 0) * preference_points
+            if not cat_placement:
+                non_cat_count += 1
             results.append(
                 {
                     "Class": class_record["class_id"],
                     "Tier": class_record["tier_label"],
                     "Assigned Tutor": tutor_name,
                     "Their Choice": choice_tier,
+                    "CAT": cat_placement,
                 }
             )
 
@@ -371,7 +448,7 @@ def match_real_choices_fast(classes, seniority_rank=None, tutor_capacity=None, t
     employed_count = len({r["Assigned Tutor"] for r in results if r["Assigned Tutor"]})
     key = (
         tuple(filled_by_priority[p] for p in priorities)
-        + (employed_count, total_score, total_seniority)
+        + (employed_count, non_cat_count, total_score, total_seniority)
     )
 
     return results, key
@@ -559,8 +636,20 @@ if __name__ == "__main__":
     print(f"\n{len(filled)} of {len(results)} candidate-having classes filled\n")
     print("=" * 75)
     for r in filled:
-        print(f"{r['Class']} ({r['Tier']}) -> {r['Assigned Tutor']} [their choice {r['Their Choice']}]")
+        cat_tag = ", CAT" if r["CAT"] else ""
+        print(
+            f"{r['Class']} ({r['Tier']}) -> {r['Assigned Tutor']} "
+            f"[their choice {r['Their Choice']}{cat_tag}]"
+        )
     print("=" * 75)
+
+    cat_placements = [r for r in filled if r["CAT"]]
+    print(
+        f"\n{len(cat_placements)} of {len(filled)} placements are Canvas-Attached-only "
+        "((CAT) tutors in non-CAT-Only classes)."
+    )
+    for r in cat_placements:
+        print(f"  {r['Class']} ({r['Tier']}) -> {r['Assigned Tutor']}")
 
     if unfilled:
         print(f"\n{len(unfilled)} classes could NOT be filled (not enough tutors):")

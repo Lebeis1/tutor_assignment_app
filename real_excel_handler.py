@@ -47,19 +47,24 @@ def _find_header_row(raw):
     return header_row
 
 
-def _split_candidate_names(cell):
+def _split_candidate_entries(cell):
     """
-    Split a "1st Choice"-style cell into individual tutor names.
+    Split a "1st Choice"-style cell into (tutor_name, is_cat) pairs.
 
     Splits on commas OUTSIDE parentheses only, so a note like
     "Lilo (Thurs lectures only), Suzanne" splits into two names, not
-    three. Strips parenthetical notes (schedule limits, "CAT", etc.)
-    from each name afterward.
+    three. Parenthetical notes are removed from the name afterward.
+
+    is_cat is True when one of the name's parenthetical notes is exactly
+    "(CAT)" (case-insensitive) - the tutor can only be Canvas Attached
+    to that class. Only that exact standard is recognised: variants
+    such as "(CAT only)" or "(maybe CAT)" are NOT treated as CAT, so
+    tutors need to be told to write exactly "(CAT)".
     """
     if pd.isna(cell):
         return []
 
-    names = []
+    pieces = []
     depth = 0
     current = ""
 
@@ -71,21 +76,28 @@ def _split_candidate_names(cell):
             depth = max(0, depth - 1)
             current += character
         elif character == "," and depth == 0:
-            names.append(current)
+            pieces.append(current)
             current = ""
         else:
             current += character
 
-    names.append(current)
+    pieces.append(current)
 
-    cleaned = []
+    entries = []
 
-    for name in names:
-        name = re.sub(r"\(.*?\)", "", name).strip()
+    for piece in pieces:
+        notes = re.findall(r"\(([^)]*)\)", piece)
+        is_cat = any(note.strip().lower() == "cat" for note in notes)
+        name = re.sub(r"\(.*?\)", "", piece).strip()
         if name:
-            cleaned.append(name)
+            entries.append((name, is_cat))
 
-    return cleaned
+    return entries
+
+
+def _split_candidate_names(cell):
+    """Just the tutor names from a choice cell (see _split_candidate_entries)."""
+    return [name for name, _ in _split_candidate_entries(cell)]
 
 
 def _build_name_canonicalizer(all_raw_names):
@@ -297,6 +309,7 @@ def load_real_choices(file_path, sheet_name="Choices Round 1"):
             "tier_label": "Tier 1 EU",
             "tier_priority": 1,
             "candidates": [("Cassidy Rosenbaum", 1), ("Elizabeth Lanovaya", 1)],
+            "cat_candidates": {"Elizabeth Lanovaya"},   # wrote "(CAT)" here
         }
 
     Where the second element of each candidate tuple is which choice
@@ -345,17 +358,20 @@ def load_real_choices(file_path, sheet_name="Choices Round 1"):
         tier_label = row["Tier"]
         tier_priority = TIER_FILL_PRIORITY.get(tier_label, max(TIER_FILL_PRIORITY.values()) + 1)
 
-        # tutor -> best (lowest/most-preferred) choice tier they listed
-        # for THIS class, in case of an accidental duplicate listing.
-        best_tier_for_tutor = {}
+        # tutor -> (best choice tier, is_cat) they listed for THIS class.
+        # If a tutor is accidentally listed twice, the better choice tier
+        # wins; on a tie, the entry WITHOUT (CAT) wins (it is the less
+        # restrictive one).
+        best_for_tutor = {}
 
         for choice_tier, column in enumerate(PREFERENCE_COLUMNS, start=1):
-            for raw_name in _split_candidate_names(row[column]):
+            for raw_name, is_cat in _split_candidate_entries(row[column]):
                 name = canonicalize(raw_name)
-                if name not in best_tier_for_tutor or choice_tier < best_tier_for_tutor[name]:
-                    best_tier_for_tutor[name] = choice_tier
+                entry = (choice_tier, is_cat)
+                if name not in best_for_tutor or entry < best_for_tutor[name]:
+                    best_for_tutor[name] = entry
 
-        if not best_tier_for_tutor:
+        if not best_for_tutor:
             continue  # no candidates at all - disregard this class
 
         classes.append(
@@ -363,7 +379,16 @@ def load_real_choices(file_path, sheet_name="Choices Round 1"):
                 "class_id": class_id,
                 "tier_label": tier_label,
                 "tier_priority": tier_priority,
-                "candidates": sorted(best_tier_for_tutor.items(), key=lambda pair: pair[1]),
+                "candidates": sorted(
+                    ((name, entry[0]) for name, entry in best_for_tutor.items()),
+                    key=lambda pair: pair[1],
+                ),
+                # Tutors who wrote "(CAT)" for this class (Canvas Attached
+                # only). Kept separate from "candidates" so the existing
+                # (name, choice_tier) pairs keep their shape.
+                "cat_candidates": {
+                    name for name, entry in best_for_tutor.items() if entry[1]
+                },
             }
         )
 
