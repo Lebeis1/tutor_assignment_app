@@ -47,26 +47,27 @@ def _full_coverage_tutors(members):
     return set.intersection(*sets) if sets else set()
 
 
-def describe_groups(classes):
+def describe_groups(classes, unstaffed_keys=frozenset()):
     """
     Look at the Link Group column and report, for each label used:
     which sections it has, which tutors listed all of them, and whether
     it can be merged. Also returns plain-language notices about anything
-    that looks like a mistake in the sheet.
+    that looks like a mistake in the sheet. unstaffed_keys: labels that
+    also appear on classes with no tutor names (so a lone labelled class
+    is expected there, not a typo).
 
     Returns (groups, notices) where groups maps key -> info dict.
     """
     info = {}
     notices = []
+    single_use = []
     for key, group in find_groups(classes).items():
         members = group["members"]
         ids = [m["class_id"] for m in members]
         if len(members) == 1:
-            notices.append(
-                f"Link Group “{group['label']}” is used by only one class with tutor "
-                f"names ({ids[0]}), so it has no effect. If it should link to another "
-                "class, check the spelling of the label."
-            )
+            if key in unstaffed_keys:
+                continue  # its partners simply have no tutor names - shown on the page
+            single_use.append(f"\u201c{group['label']}\u201d ({ids[0]})")
             continue
 
         full = _full_coverage_tutors(members)
@@ -89,6 +90,12 @@ def describe_groups(classes):
             "full_tutors": full,
             "mergeable": mergeable,
         }
+    if single_use:
+        notices.append(
+            "These Link Groups are used by only one class with tutor names, so they have no "
+            "effect (fine if the class is meant to stand alone, otherwise check the spelling): "
+            + ", ".join(single_use) + "."
+        )
     return info, notices
 
 

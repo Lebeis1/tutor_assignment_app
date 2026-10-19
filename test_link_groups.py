@@ -173,3 +173,40 @@ if __name__ == "__main__":
     test_size_aware_fast_matches_bruteforce()
     test_scenarios()
     test_search_matches_exhaustive_splits(400)
+
+
+def test_unstaffed_linked_classes():
+    """A label on a class with no tutor names is reported next to its partner."""
+    import os
+    import tempfile
+
+    from openpyxl import Workbook
+
+    from real_excel_handler import link_group_key, load_real_choices, load_unstaffed_linked_classes
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Choices Round 1"
+    ws.append(["Tier", "Subject", "Section", "Class Status", "1st Choice", "2nd Choice", "3rd Choice", "Link Group"])
+    ws.append(["Tier 3", "PSY 300", "3", "Active", None, None, "Dylan Wikel (CAT)", "PSY 300 - C"])
+    ws.append(["Tier 3", "PSY 300", "5L", "Active", None, None, None, "psy 300 – c"])
+    ws.append(["Tier 3", "PSY 300", "6L", "Active", None, None, None, "PSY 300 - C"])
+    ws.append(["Tier 3", "PSY 300", "7L", "Active", None, None, None, None])  # no label: ignored
+    ws.append(["Tier 3", "ACCT 1", "1", "Active", "Ann Lee", None, None, "ACCT - A"])  # staffed, alone
+    path = os.path.join(tempfile.mkdtemp(), "t.xlsx")
+    wb.save(path)
+
+    classes = load_real_choices(path)
+    unstaffed = load_unstaffed_linked_classes(path)
+    assert sorted(u["class_id"] for u in unstaffed) == ["PSY 300 5L", "PSY 300 6L"], unstaffed
+    keys = {link_group_key(u["link_group"]) for u in unstaffed}
+    assert len(keys) == 1  # spelling/dash/case differences still count as the same label
+
+    _, notes = describe_groups(classes, keys)
+    assert not any("PSY 300 - C" in n for n in notes), notes   # explained, so not flagged
+    assert any("ACCT - A" in n for n in notes), notes          # a real lone label still is
+    print("PASS: labelled classes with no tutor names are listed with their partner, not flagged as typos")
+
+
+if __name__ == "__main__":
+    test_unstaffed_linked_classes()
