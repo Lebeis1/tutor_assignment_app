@@ -17,7 +17,10 @@
   .tab { background:none; border:0; padding:10px 14px; font:inherit; color:var(--muted); cursor:pointer; border-bottom:2px solid transparent; margin-bottom:-1px; }
   .tab.active { color:var(--accent); border-bottom-color:var(--accent); font-weight:650; }
   .panel { display:none; } .panel.active { display:block; }
-  input.search { width:100%; max-width:340px; padding:8px 12px; border:1px solid var(--line); border-radius:8px; background:var(--card); color:var(--ink); font:inherit; margin-bottom:12px; }
+  input.search { width:100%; max-width:340px; padding:8px 12px; border:1px solid var(--line); border-radius:8px; background:var(--card); color:var(--ink); font:inherit; }
+  .filters { display:flex; flex-wrap:wrap; align-items:center; gap:8px 18px; margin-bottom:12px; }
+  .only-open { display:inline-flex; align-items:center; gap:6px; font-size:14px; cursor:pointer; }
+  .only-open input { margin:0; }
   .scroll { overflow-x:auto; }
   table { width:100%; border-collapse:collapse; background:var(--card); border:1px solid var(--line); border-radius:12px; overflow:hidden; }
   th, td { text-align:left; padding:9px 14px; border-bottom:1px solid var(--line); vertical-align:top; }
@@ -118,7 +121,10 @@
 
 <section class="panel active" id="p-class">
   <p class="howto">Drag a tutor&rsquo;s name onto another class to move them, or drop it in the tray below to set it aside. Dropping on a class that already has a tutor replaces them, and the replaced tutor goes to the tray. You can also click a name in the tray, then click a class. Any move is allowed; risky ones show a warning.</p>
-  <input class="search" type="search" placeholder="Filter by class or tutor&hellip;" id="filter">
+  <div class="filters">
+    <input class="search" type="search" placeholder="Filter by class or tutor&hellip;" id="filter">
+    <label class="only-open"><input type="checkbox" id="only-open"> Show only open classes <span class="muted" id="open-count"></span></label>
+  </div>
   <div class="scroll"><table id="t-class">
     <thead><tr><th>Class</th><th>Assigned tutor</th><th>Choice</th><th>Notes</th></tr></thead>
     <tbody id="class-body"></tbody>
@@ -171,6 +177,7 @@
   var lastSaved = serialize();
   var selectedChip = null;
   var filterText = "";
+  var onlyOpen = false;
 
   function serialize() { return JSON.stringify([state.assign, state.tray.map(function (c) { return c.name; })]); }
   function isDirty() { return serialize() !== lastSaved; }
@@ -277,10 +284,14 @@
   function renderClasses(L) {
     var body = document.getElementById("class-body");
     body.textContent = "";
-    var lastTier = null, q = filterText.toLowerCase();
+    var lastTier = null, q = filterText.toLowerCase(), shown = 0;
+    var openNow = DATA.classes.filter(function (c) { return !state.assign[c.id]; }).length;
+    document.getElementById("open-count").textContent = "(" + openNow + ")";
     DATA.classes.forEach(function (c) {
       var t = state.assign[c.id];
+      if (onlyOpen && t) return;
       if (q && c.id.toLowerCase().indexOf(q) === -1 && (t || "").toLowerCase().indexOf(q) === -1) return;
+      shown++;
       if (!q && c.tier !== lastTier) {
         lastTier = c.tier;
         body.appendChild(h("tr", { class: "tierhead" }, h("td", { colSpan: 4, text: c.tier })));
@@ -321,6 +332,9 @@
       var tr = h("tr", { class: "crow", "data-class": c.id }, nameCell, tutorCell, choiceCell, notes);
       body.appendChild(tr);
     });
+    if (!shown) {
+      body.appendChild(h("tr", null, h("td", { colSpan: 4, class: "muted", text: onlyOpen && !q ? "No open classes right now." : "No classes match." })));
+    }
   }
 
   function renderTutors(L) {
@@ -565,6 +579,7 @@
     toast("Reset to the draft");
   });
   document.getElementById("filter").addEventListener("input", function (e) { filterText = e.target.value; renderClasses(loads()); });
+  document.getElementById("only-open").addEventListener("change", function (e) { onlyOpen = e.target.checked; renderClasses(loads()); });
   document.querySelectorAll(".tab").forEach(function (tab) {
     tab.addEventListener("click", function () {
       document.querySelectorAll(".tab").forEach(function (t) { t.classList.remove("active"); });
