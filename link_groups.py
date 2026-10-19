@@ -22,8 +22,8 @@ solver, and expands the answer back to one row per section afterwards.
 import itertools
 import math
 
-from real_algorithm import is_cat_placement, match_real_choices_fast
-from real_excel_handler import link_group_key
+from algorithm import is_cat_placement, match_real_choices_fast
+from excel_handler import link_group_key
 
 # Above this many splittable families, only single splits are tried.
 MAX_PAIR_SEARCH = 14
