@@ -1,100 +1,166 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta
-        name="viewport"
-        content="width=device-width, initial-scale=1.0"
-    >
-    <title>Workbook Preview</title>
-    <link
-        rel="stylesheet"
-        href="{{ url_for('static', filename='style.css') }}"
-    >
-</head>
+{% extends "base.html" %}
+{% block title %}Draft placements{% endblock %}
+{% block head %}
+<style>
+  .top { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; flex-wrap:wrap; margin-bottom:18px; }
+  .stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; margin-bottom:16px; }
+  .stat { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px 16px; }
+  .stat b { display:block; font-size:26px; line-height:1.1; }
+  .stat span { color:var(--muted); font-size:13px; }
+  .note { background:var(--accent-soft); color:var(--ink); border-radius:10px; padding:12px 14px; margin-bottom:18px; font-size:14px; }
+  .notice { background:var(--warn-soft); color:var(--ink); border-radius:10px; padding:10px 14px; margin-bottom:18px; font-size:14px; }
+  .notice ul { margin:8px 0 2px; padding-left:20px; }
+  .notice li { margin:3px 0; }
+  .tiers { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:18px; }
+  .tabs { display:flex; gap:4px; border-bottom:1px solid var(--line); margin-bottom:14px; flex-wrap:wrap; }
+  .tab { background:none; border:0; padding:10px 14px; font:inherit; color:var(--muted); cursor:pointer; border-bottom:2px solid transparent; margin-bottom:-1px; }
+  .tab.active { color:var(--accent); border-bottom-color:var(--accent); font-weight:650; }
+  .panel { display:none; } .panel.active { display:block; }
+  input.search { width:100%; max-width:340px; padding:8px 12px; border:1px solid var(--line); border-radius:8px; background:var(--card); color:var(--ink); font:inherit; margin-bottom:12px; }
+  .scroll { overflow-x:auto; }
+  table { width:100%; border-collapse:collapse; background:var(--card); border:1px solid var(--line); border-radius:12px; overflow:hidden; }
+  th, td { text-align:left; padding:10px 14px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { font-size:12px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); background:var(--bg); }
+  tr:last-child td { border-bottom:0; }
+  .tierhead td { background:var(--bg); font-weight:650; font-size:13px; color:var(--muted); }
+  details summary { cursor:pointer; color:var(--accent); font-size:13px; }
+  .alt { margin:6px 0 0; padding:0; list-style:none; font-size:13px; }
+  .alt li { padding:2px 0; }
+  .tutorgrid { display:grid; grid-template-columns:repeat(auto-fill,minmax(300px,1fr)); gap:12px; }
+  .tcard { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px 16px; }
+  .tcard h3 { margin:0 0 2px; font-size:16px; }
+  .tcard ul { margin:8px 0 0; padding:0; list-style:none; }
+  .tcard li { display:flex; justify-content:space-between; gap:8px; padding:4px 0; border-top:1px solid var(--line); font-size:14px; }
+  @media print { header, .tabs, .search, .btn { display:none; } .panel { display:block !important; } }
+</style>
+{% endblock %}
 
-<body>
-    <main class="container results-container">
-        <section class="card">
-            <h1>Workbook Preview</h1>
+{% block content %}
+{% set s = result.stats %}
+<div class="top">
+  <div>
+    <h1>Draft placements</h1>
+    <p class="lead" style="margin:0">From <b>{{ filename }}</b> — a starting point to review, not a final answer.</p>
+  </div>
+  <div><a class="btn ghost" href="/">Upload another file</a> <button class="btn" onclick="window.print()">Print</button></div>
+</div>
 
-            <p>
-                File:
-                <strong>{{ filename }}</strong>
-            </p>
+<div class="stats">
+  <div class="stat"><b>{{ s.filled }}<small class="muted" style="font-size:15px"> / {{ s.total }}</small></b><span>classes with a tutor</span></div>
+  <div class="stat"><b>{{ s.tutors_placed }}</b><span>tutors placed</span></div>
+  <div class="stat"><b>{{ s.contested }}</b><span>classes with equally good alternatives</span></div>
+  <div class="stat"><b>{{ s.cat }}</b><span>Canvas-attached (CAT) placements</span></div>
+  <div class="stat"><b>{{ s.unfilled }}</b><span>classes left open</span></div>
+</div>
 
-            <div class="success-message">
-                The Excel workbook was loaded successfully.
-            </div>
+<div class="note">
+  Tutors got their <b>1st choice in {{ result.choice_counts[1] }}</b>, 2nd in {{ result.choice_counts[2] }}, 3rd in {{ result.choice_counts[3] }} placements.
+  {% if not result.tutor_sheet_loaded %}The “Tutors” sheet was empty, so every tutor was capped at 2 classes with no seniority tie-break.{% endif %}
+</div>
 
-            <h2>Tutors</h2>
+{% if result.notices %}
+<details class="notice" {{ 'open' if result.notices|length <= 3 }}>
+  <summary><b>{{ result.notices|length }} thing{{ 's' if result.notices|length != 1 }} to check in the Link Group column</b></summary>
+  <ul>{% for n in result.notices %}<li>{{ n }}</li>{% endfor %}</ul>
+</details>
+{% endif %}
 
-            <div class="table-wrapper">
-                <table>
-                    <thead>
-                        <tr>
-                            <th>Tutor Name</th>
-                            <th>Seniority</th>
-                            <th>First Choice</th>
-                            <th>Second Choice</th>
-                            <th>Third Choice</th>
-                        </tr>
-                    </thead>
+<div class="tiers">
+  {% for t in result.tier_summary %}
+    <span class="badge {{ 'ok' if t.filled == t.total else 'warn' }}">{{ t.tier }}: {{ t.filled }}/{{ t.total }} filled</span>
+  {% endfor %}
+</div>
 
-                    <tbody>
-                        {% for tutor in tutors %}
-                            <tr>
-                                <td>{{ tutor["Tutor Name"] }}</td>
-                                <td>{{ tutor["Seniority"] }}</td>
-                                <td>{{ tutor["First Choice"] }}</td>
-                                <td>{{ tutor["Second Choice"] }}</td>
-                                <td>{{ tutor["Third Choice"] }}</td>
-                            </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
-            </div>
+<div class="tabs" role="tablist">
+  <button class="tab active" data-panel="p-class">By class</button>
+  <button class="tab" data-panel="p-tutor">By tutor</button>
+  <button class="tab" data-panel="p-attn">Needs attention ({{ s.unfilled + s.cat + s.contested }})</button>
+</div>
 
-            <h2>Classes</h2>
+<section class="panel active" id="p-class">
+  <input class="search" type="search" placeholder="Filter by class or tutor…" data-filter="t-class">
+  <div class="scroll"><table id="t-class">
+    <thead><tr><th>Class</th><th>Assigned tutor</th><th>Choice</th><th>Equally good alternatives</th></tr></thead>
+    <tbody>
+    {% set ns = namespace(tier=None) %}
+    {% for r in result.rows %}
+      {% if r.tier != ns.tier %}{% set ns.tier = r.tier %}<tr class="tierhead"><td colspan="4">{{ r.tier }}</td></tr>{% endif %}
+      <tr>
+        <td><b>{{ r.class }}</b>
+          {% if r.kept_together %}<br><span class="badge" title="Kept with {{ r.linked_with|join(', ') }} and counts as one class toward Max Classes">linked: {{ r.link_group }}</span>{% endif %}</td>
+        <td>{% if r.tutor %}{{ r.tutor }}{% if r.cat %} <span class="badge warn" title="Tutor wrote (CAT) for this class">CAT</span>{% endif %}
+            {% else %}<span class="badge bad">Open</span>{% endif %}</td>
+        <td>{% if r.tutor %}<span class="badge {{ 'ok' if r.choice == 1 else '' }}">{{ r.choice }}{{ {1:'st',2:'nd',3:'rd'}[r.choice] }}</span>{% endif %}</td>
+        <td>
+          {% if r.alternatives %}
+            <details><summary>{{ r.alternatives|length }} other option{{ 's' if r.alternatives|length > 1 }}</summary>
+              <ul class="alt">
+              {% for a in r.alternatives %}
+                <li>{{ a.tutor }} <span class="muted">({{ a.choice }}{{ {1:'st',2:'nd',3:'rd'}[a.choice] }} choice)</span>
+                  {% if a.cat %}<span class="badge warn">CAT</span>{% endif %}
+                  {% if a.recommended %}<span class="badge ok" title="Keeps related lecture/lab sections with one tutor">keeps sections together</span>{% endif %}</li>
+              {% endfor %}
+              </ul></details>
+          {% elif r.tutor %}<span class="muted">—</span>
+          {% else %}<span class="muted">{{ r.num_candidates }} tutor{{ 's' if r.num_candidates != 1 }} listed, all at capacity</span>{% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody></table></div>
+</section>
 
-            <div class="table-wrapper">
-                <table>
-                    <thead>
-                        <tr>
-                            <th>Class Name</th>
-                        </tr>
-                    </thead>
+<section class="panel" id="p-tutor">
+  <input class="search" type="search" placeholder="Filter tutors…" data-filter="g-tutor">
+  <div class="tutorgrid" id="g-tutor">
+    {% for t in result.tutors %}
+      <div class="tcard" data-text="{{ t.name|lower }}">
+        <h3>{{ t.name }}</h3>
+        <span class="muted">{{ t.load }} of {{ t.max }} max{% if t.classes|length != t.load %} ({{ t.classes|length }} sections){% endif %}{% if t.seniority %} · {{ t.seniority }}{% endif %}</span>
+        <ul>{% for c in t.classes %}
+          <li><span>{{ c.class }}{% if c.kept_together %} <span class="badge" title="Linked with {{ c.linked_with|join(', ') }}">linked</span>{% endif %}{% if c.cat %} <span class="badge warn">CAT</span>{% endif %}</span>
+              <span class="muted">{{ c.choice }}{{ {1:'st',2:'nd',3:'rd'}[c.choice] }}</span></li>
+        {% endfor %}</ul>
+      </div>
+    {% endfor %}
+  </div>
+  {% if result.unplaced_tutors %}
+    <p class="muted">Listed by classes but not placed: {{ result.unplaced_tutors|join(', ') }}</p>
+  {% endif %}
+</section>
 
-                    <tbody>
-                        {% for class_item in classes %}
-                            <tr>
-                                <td>{{ class_item["Class Name"] }}</td>
-                            </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
-            </div>
+<section class="panel" id="p-attn">
+  <h2>Classes left open ({{ s.unfilled }})</h2>
+  {% if result.unfilled %}
+  <div class="scroll"><table><thead><tr><th>Class</th><th>Tier</th><th>Tutors who listed it</th></tr></thead><tbody>
+    {% for r in result.unfilled %}<tr><td><b>{{ r.class }}</b></td><td>{{ r.tier }}</td><td>{{ r.candidates|join(', ') }}</td></tr>{% endfor %}
+  </tbody></table></div>
+  {% else %}<p class="muted">Every class with a candidate has a tutor.</p>{% endif %}
 
-            <section class="algorithm-status">
-                <h2>Assignments</h2>
+  <h2 style="margin-top:24px">Canvas-attached placements ({{ s.cat }})</h2>
+  <p class="muted" style="margin-top:0">The tutor marked “(CAT)”, and no better-fitting option was available.</p>
+  <div class="scroll"><table><thead><tr><th>Class</th><th>Tutor</th></tr></thead><tbody>
+    {% for r in result.rows if r.cat %}<tr><td><b>{{ r.class }}</b></td><td>{{ r.tutor }}</td></tr>
+    {% else %}<tr><td colspan="2" class="muted">None.</td></tr>{% endfor %}
+  </tbody></table></div>
+</section>
 
-                <p>
-                    The workbook is valid. Assignment generation
-                    will be connected after the algorithm is finalized.
-                </p>
-
-                <button type="button" disabled>
-                    Generate Assignments
-                </button>
-            </section>
-
-            <a
-                class="secondary-link"
-                href="{{ url_for('index') }}"
-            >
-                Upload another workbook
-            </a>
-        </section>
-    </main>
-</body>
-</html>
+<script>
+  document.querySelectorAll(".tab").forEach(function (tab) {
+    tab.addEventListener("click", function () {
+      document.querySelectorAll(".tab").forEach(function (t) { t.classList.remove("active"); });
+      document.querySelectorAll(".panel").forEach(function (p) { p.classList.remove("active"); });
+      tab.classList.add("active");
+      document.getElementById(tab.dataset.panel).classList.add("active");
+    });
+  });
+  document.querySelectorAll(".search").forEach(function (box) {
+    box.addEventListener("input", function () {
+      var q = box.value.toLowerCase(), target = document.getElementById(box.dataset.filter);
+      target.querySelectorAll("tbody tr:not(.tierhead), .tcard").forEach(function (el) {
+        el.style.display = el.textContent.toLowerCase().indexOf(q) === -1 ? "none" : "";
+      });
+      target.querySelectorAll(".tierhead").forEach(function (h) { h.style.display = q ? "none" : ""; });
+    });
+  });
+</script>
+{% endblock %}

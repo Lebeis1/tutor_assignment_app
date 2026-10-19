@@ -299,6 +299,22 @@ def tutor_names_from_classes(classes):
     return sorted({name for c in classes for name, _ in c["candidates"]})
 
 
+def _clean_link_group(value):
+    """Tidy a Link Group cell: None for blank, otherwise the text with
+    surrounding/repeated spaces removed."""
+    if value is None or pd.isna(value):
+        return None
+    text = " ".join(str(value).split())
+    return text or None
+
+
+def link_group_key(label):
+    """The form of a Link Group label used to decide whether two rows
+    share a group: case-insensitive, with en/em dashes treated as plain
+    hyphens (so "COMP 232 \u2013 A" and "comp 232 - a" are the same group)."""
+    return label.replace("\u2013", "-").replace("\u2014", "-").casefold()
+
+
 def load_real_choices(file_path, sheet_name="Choices Round 1"):
     """
     Parse the real class-oriented LRC placement sheet into a list of
@@ -310,6 +326,7 @@ def load_real_choices(file_path, sheet_name="Choices Round 1"):
             "tier_priority": 1,
             "candidates": [("Cassidy Rosenbaum", 1), ("Elizabeth Lanovaya", 1)],
             "cat_candidates": {"Elizabeth Lanovaya"},   # wrote "(CAT)" here
+            "link_group": "COMP 232 - A",               # None when blank / no column
         }
 
     Where the second element of each candidate tuple is which choice
@@ -322,6 +339,13 @@ def load_real_choices(file_path, sheet_name="Choices Round 1"):
 
     dataframe = pd.read_excel(file_path, sheet_name=sheet_name, header=header_row)
     dataframe = dataframe.rename(columns={dataframe.columns[0]: "Tier"})
+
+    # Optional "Link Group" column (found by its header name, so it can
+    # sit anywhere - the far right is safest). Rows sharing a label are
+    # treated as one lecture+lab family by link_groups.py.
+    link_group_column = next(
+        (c for c in dataframe.columns if str(c).strip().lower() == "link group"), None
+    )
 
     # Drop banner/separator rows (e.g. the "PSY EU Courses" divider),
     # which have no Subject/Section of their own.
@@ -389,6 +413,9 @@ def load_real_choices(file_path, sheet_name="Choices Round 1"):
                 "cat_candidates": {
                     name for name, entry in best_for_tutor.items() if entry[1]
                 },
+                "link_group": (
+                    _clean_link_group(row[link_group_column]) if link_group_column else None
+                ),
             }
         )
 

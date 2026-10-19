@@ -1,60 +1,19 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta
-        name="viewport"
-        content="width=device-width, initial-scale=1.0"
-    >
-    <title>Tutor Assignment System</title>
-    <link
-        rel="stylesheet"
-        href="{{ url_for('static', filename='style.css') }}"
-    >
-</head>
+{% extends "base.html" %}
+{% block content %}
+<h1>Draft your tutor placements</h1>
+<p class="lead">Upload the placement workbook. The app reads the “Choices Round 1” sheet (and the “Tutors” sheet if you filled it in) and builds a first-pass assignment for you to review and adjust.</p>
 
-<body>
-    <main class="container">
-        <section class="card">
-            <h1>Tutor Assignment System</h1>
+{% if error %}<div class="error">{{ error }}</div>{% endif %}
 
-            <p class="introduction">
-                Upload an Excel workbook containing the Tutors and
-                Classes worksheets.
-            </p>
-
-            {% if error %}
-                <div class="error-message">
-                    {{ error }}
-                </div>
-            {% endif %}
-
-            <form
-                action="{{ url_for('upload_file') }}"
-                method="post"
-                enctype="multipart/form-data"
-            >
-                <label for="excel_file">
-                    Select an Excel workbook
-                </label>
-
-                <input
-                    type="file"
-                    id="excel_file"
-                    name="excel_file"
-                    accept=".xlsx"
-                    required
-                >
-
-                <button type="submit">
-                    Upload and Validate
-                </button>
-            </form>
-
-            <p class="file-requirement">
-                Accepted format: .xlsx
-            </p>
-        </section>
-    </main>
-</body>
-</html>
+<form class="card" action="/upload" method="post" enctype="multipart/form-data" id="form">
+  <h2>Excel workbook (.xlsx)</h2>
+  <p class="muted" style="margin-top:0">Max size 10 MB. Nothing is stored — the file is deleted once the draft is built.</p>
+  <input type="file" name="excel_file" accept=".xlsx" required>
+  <p><button class="btn" type="submit" id="go">Build draft placements</button></p>
+</form>
+<script>
+  document.getElementById("form").addEventListener("submit", function () {
+    var b = document.getElementById("go"); b.disabled = true; b.textContent = "Matching… this takes a few seconds";
+  });
+</script>
+{% endblock %}

@@ -104,8 +104,15 @@ def match_real_choices_bruteforce(
     remaining_by_priority_from[len(ordered_classes)] = {p: 0 for p in priorities}
     for i in range(len(ordered_classes) - 1, -1, -1):
         counts = dict(remaining_by_priority_from[i + 1])
-        counts[ordered_classes[i]["tier_priority"]] += 1
+        counts[ordered_classes[i]["tier_priority"]] += ordered_classes[i].get("size", 1)
         remaining_by_priority_from[i] = counts
+
+    # Sections still to place from each position onward (a linked
+    # lecture+lab "unit" is one class needing one slot, but counts as
+    # several sections for fill totals, CAT totals and preference score).
+    remaining_size_from = [0] * (len(ordered_classes) + 1)
+    for i in range(len(ordered_classes) - 1, -1, -1):
+        remaining_size_from[i] = remaining_size_from[i + 1] + ordered_classes[i].get("size", 1)
 
     best = {"key": None, "assignment": None}
 
@@ -125,8 +132,8 @@ def match_real_choices_bruteforce(
         # Best case: every remaining class employs a brand-new tutor.
         optimistic_employed = len(tutor_load) + remaining_classes
         # Best case: every remaining class is filled without a CAT placement.
-        optimistic_non_cat = non_cat_count + remaining_classes
-        optimistic_score = total_score + PREFERENCE_SCORES[1] * remaining_classes
+        optimistic_non_cat = non_cat_count + remaining_size_from[index]
+        optimistic_score = total_score + PREFERENCE_SCORES[1] * remaining_size_from[index]
         # Seniority bound is left unbounded since it's a low-stakes
         # tie-breaker only.
         return tuple(optimistic_filled[p] for p in priorities) + (
@@ -158,6 +165,7 @@ def match_real_choices_bruteforce(
 
         class_record = ordered_classes[index]
         tier_priority = class_record["tier_priority"]
+        class_size = class_record.get("size", 1)
 
         for tutor_name, choice_tier in class_record["candidates"]:
             if tutor_load.get(tutor_name, 0) >= tutor_capacity.get(tutor_name, DEFAULT_TUTOR_CAPACITY):
@@ -169,7 +177,7 @@ def match_real_choices_bruteforce(
 
             tutor_load[tutor_name] = tutor_load.get(tutor_name, 0) + 1
             assignment[class_record["class_id"]] = (tutor_name, choice_tier)
-            filled_by_priority[tier_priority] += 1
+            filled_by_priority[tier_priority] += class_size
 
             if show_trace:
                 print(
@@ -183,12 +191,12 @@ def match_real_choices_bruteforce(
                 tutor_load,
                 filled_by_priority,
                 assignment,
-                non_cat_count + (0 if cat_placement else 1),
-                total_score + preference_points,
-                total_seniority + rank * preference_points,
+                non_cat_count + (0 if cat_placement else class_size),
+                total_score + preference_points * class_size,
+                total_seniority + rank * preference_points * class_size,
             )
 
-            filled_by_priority[tier_priority] -= 1
+            filled_by_priority[tier_priority] -= class_size
             del assignment[class_record["class_id"]]
             tutor_load[tutor_name] -= 1
             if tutor_load[tutor_name] == 0:
@@ -290,6 +298,10 @@ def match_real_choices_fast(classes, seniority_rank=None, tutor_capacity=None, t
     rng = _random.Random(tie_break_seed) if tie_break_seed is not None else None
 
     num_classes = len(classes)
+    # A linked lecture+lab "unit" is ONE row here (one tutor slot) but
+    # stands for several sections: it counts that many times toward tier
+    # fills, CAT avoidance and preference score. Plain classes have size 1.
+    total_size = sum(c.get("size", 1) for c in classes)
     priorities = sorted(set(TIER_FILL_PRIORITY.values()) | {c["tier_priority"] for c in classes})
 
     tutor_names = sorted({name for c in classes for name, _ in c["candidates"]})
@@ -309,15 +321,15 @@ def match_real_choices_fast(classes, seniority_rank=None, tutor_capacity=None, t
     max_preference_contribution = max(PREFERENCE_SCORES.values())
 
     seniority_weight = 1
-    seniority_max_total = max_seniority_contribution * num_classes * seniority_weight
+    seniority_max_total = max_seniority_contribution * total_size * seniority_weight
 
     preference_weight = seniority_max_total + 1
-    preference_max_total = max_preference_contribution * num_classes * preference_weight
+    preference_max_total = max_preference_contribution * total_size * preference_weight
 
     # "Avoid a CAT placement" is a bonus for every filled class that is
     # NOT a CAT placement. It must outweigh any total preference score.
     cat_weight = preference_max_total + seniority_max_total + 1
-    cat_max_total = num_classes * cat_weight
+    cat_max_total = total_size * cat_weight
 
     # "Employ a new tutor" must outweigh any total of the levels below.
     employment_weight = cat_max_total + preference_max_total + seniority_max_total + 1
@@ -328,7 +340,7 @@ def match_real_choices_fast(classes, seniority_rank=None, tutor_capacity=None, t
     )
     classes_in_priority = {p: 0 for p in priorities}
     for c in classes:
-        classes_in_priority[c["tier_priority"]] += 1
+        classes_in_priority[c["tier_priority"]] += c.get("size", 1)
 
     tier_weight = {}
     for p in reversed(priorities):  # build from LEAST urgent up to MOST urgent
@@ -365,6 +377,7 @@ def match_real_choices_fast(classes, seniority_rank=None, tutor_capacity=None, t
     # Real class rows / real slot columns: top-left block.
     for row, class_record in enumerate(classes):
         candidate_tiers = dict(class_record["candidates"])  # tutor -> choice_tier
+        class_size = class_record.get("size", 1)
         for col, (tutor_name, slot_number) in enumerate(slots):
             if tutor_name not in candidate_tiers:
                 continue
@@ -375,11 +388,10 @@ def match_real_choices_fast(classes, seniority_rank=None, tutor_capacity=None, t
             non_cat_bonus = 0 if is_cat_placement(class_record, tutor_name) else cat_weight
 
             value = (
-                tier_weight[class_record["tier_priority"]]
+                (tier_weight[class_record["tier_priority"]] + non_cat_bonus
+                 + preference_points * preference_weight
+                 + (rank * preference_points) * seniority_weight) * class_size
                 + employment_bonus
-                + non_cat_bonus
-                + preference_points * preference_weight
-                + (rank * preference_points) * seniority_weight
             )
             if rng is not None:
                 # Microscopic noise (<< 1, the smallest real weight unit)
@@ -429,11 +441,12 @@ def match_real_choices_fast(classes, seniority_rank=None, tutor_capacity=None, t
             tutor_name, choice_tier = entry
             preference_points = PREFERENCE_SCORES[choice_tier]
             cat_placement = is_cat_placement(class_record, tutor_name)
-            filled_by_priority[class_record["tier_priority"]] += 1
-            total_score += preference_points
-            total_seniority += seniority_rank.get(tutor_name, 0) * preference_points
+            class_size = class_record.get("size", 1)
+            filled_by_priority[class_record["tier_priority"]] += class_size
+            total_score += preference_points * class_size
+            total_seniority += seniority_rank.get(tutor_name, 0) * preference_points * class_size
             if not cat_placement:
-                non_cat_count += 1
+                non_cat_count += class_size
             results.append(
                 {
                     "Class": class_record["class_id"],
@@ -626,9 +639,15 @@ if __name__ == "__main__":
         f"(blank = default of {DEFAULT_TUTOR_CAPACITY} classes / no seniority tie-break)."
     )
 
-    results, key = match_real_choices_fast(
-        classes, seniority_rank=seniority_rank, tutor_capacity=capacities
-    )
+    # Lecture + lab families from the optional "Link Group" column.
+    from link_groups import describe_groups, expand_results, solve_with_groups
+
+    group_info, group_notices = describe_groups(classes)
+    for note in group_notices:
+        print(f"Note: {note}")
+    solved = solve_with_groups(classes, seniority_rank, capacities, group_info)
+    results = expand_results(solved["results"], solved["members_by_unit"])
+    key = solved["key"]
 
     filled = [r for r in results if r["Assigned Tutor"] is not None]
     unfilled = [r for r in results if r["Assigned Tutor"] is None]
