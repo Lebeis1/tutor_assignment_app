@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Tutor Placement{% endblock %}</title>
+  <style>
+    :root {
+      --bg: #f6f7f9; --card: #fff; --ink: #1c2230; --muted: #667085; --line: #e3e6ec;
+      --accent: #2f5bea; --accent-soft: #e8eefe;
+      --ok: #137a4b; --ok-soft: #e1f4ea; --warn: #9a5b00; --warn-soft: #fdf0d5;
+      --bad: #b42318; --bad-soft: #fde7e5;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #12151c; --card: #1b2029; --ink: #e8ebf2; --muted: #98a2b3; --line: #2b3240;
+        --accent: #7b9bff; --accent-soft: #232c4a;
+        --ok: #5fd39a; --ok-soft: #173326; --warn: #f2b84b; --warn-soft: #3a2d12;
+        --bad: #ff8a80; --bad-soft: #3b1a18;
+      }
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--ink);
+           font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+    header { background: var(--card); border-bottom: 1px solid var(--line); }
+    .wrap { max-width: 1100px; margin: 0 auto; padding: 0 16px; }
+    header .wrap { display: flex; align-items: center; justify-content: space-between; height: 56px; }
+    header a { color: var(--ink); text-decoration: none; font-weight: 650; }
+    main { padding: 28px 0 60px; }
+    h1 { font-size: 26px; margin: 0 0 6px; }
+    h2 { font-size: 17px; margin: 0 0 12px; }
+    p.lead { color: var(--muted); margin: 0 0 22px; }
+    .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 20px; }
+    .btn { background: var(--accent); color: #fff; border: 0; border-radius: 8px; padding: 10px 18px;
+           font: inherit; font-weight: 600; cursor: pointer; text-decoration: none; display: inline-block; }
+    .btn.ghost { background: transparent; color: var(--accent); border: 1px solid var(--line); }
+    .error { background: var(--bad-soft); color: var(--bad); border-radius: 8px; padding: 12px 14px; margin-bottom: 16px; }
+    .badge { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; font-weight: 600;
+             background: var(--accent-soft); color: var(--accent); white-space: nowrap; }
+    .badge.ok { background: var(--ok-soft); color: var(--ok); }
+    .badge.warn { background: var(--warn-soft); color: var(--warn); }
+    .badge.bad { background: var(--bad-soft); color: var(--bad); }
+    .muted { color: var(--muted); }
+  </style>
+  {% block head %}{% endblock %}
+</head>
+<body>
+  <header><div class="wrap"><a href="/">Tutor Placement</a><span class="muted">Fall placement assistant</span></div></header>
+  <main><div class="wrap">{% block content %}{% endblock %}</div></main>
+</body>
+</html>
