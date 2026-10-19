@@ -2,15 +2,16 @@
 {% block title %}Draft placements{% endblock %}
 {% block head %}
 <style>
+  body { padding-bottom: 190px; }
   .top { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; flex-wrap:wrap; margin-bottom:18px; }
   .stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; margin-bottom:16px; }
   .stat { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px 16px; }
   .stat b { display:block; font-size:26px; line-height:1.1; }
-  .stat span { color:var(--muted); font-size:13px; }
-  .note { background:var(--accent-soft); color:var(--ink); border-radius:10px; padding:12px 14px; margin-bottom:18px; font-size:14px; }
-  .notice { background:var(--warn-soft); color:var(--ink); border-radius:10px; padding:10px 14px; margin-bottom:18px; font-size:14px; }
-  .notice ul { margin:8px 0 2px; padding-left:20px; }
-  .notice li { margin:3px 0; }
+  .stat > span { color:var(--muted); font-size:13px; }
+  .note { background:var(--accent-soft); border-radius:10px; padding:12px 14px; margin-bottom:18px; font-size:14px; }
+  .notice { background:var(--warn-soft); border-radius:10px; padding:10px 14px; margin-bottom:18px; font-size:14px; }
+  .notice ul { margin:8px 0 2px; padding-left:20px; } .notice li { margin:3px 0; }
+  .howto { color:var(--muted); font-size:14px; margin:0 0 12px; }
   .tiers { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:18px; }
   .tabs { display:flex; gap:4px; border-bottom:1px solid var(--line); margin-bottom:14px; flex-wrap:wrap; }
   .tab { background:none; border:0; padding:10px 14px; font:inherit; color:var(--muted); cursor:pointer; border-bottom:2px solid transparent; margin-bottom:-1px; }
@@ -19,148 +20,600 @@
   input.search { width:100%; max-width:340px; padding:8px 12px; border:1px solid var(--line); border-radius:8px; background:var(--card); color:var(--ink); font:inherit; margin-bottom:12px; }
   .scroll { overflow-x:auto; }
   table { width:100%; border-collapse:collapse; background:var(--card); border:1px solid var(--line); border-radius:12px; overflow:hidden; }
-  th, td { text-align:left; padding:10px 14px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th, td { text-align:left; padding:9px 14px; border-bottom:1px solid var(--line); vertical-align:top; }
   th { font-size:12px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); background:var(--bg); }
   tr:last-child td { border-bottom:0; }
   .tierhead td { background:var(--bg); font-weight:650; font-size:13px; color:var(--muted); }
-  details summary { cursor:pointer; color:var(--accent); font-size:13px; }
-  .alt { margin:6px 0 0; padding:0; list-style:none; font-size:13px; }
-  .alt li { padding:2px 0; }
+  .badge.sm { font-size:11px; }
+  .badge.link { background:transparent; border:1px solid var(--line); color:var(--muted); }
+
+  /* ---- drag and drop ---- */
+  .pill { display:inline-flex; align-items:center; gap:6px; padding:3px 6px 3px 10px; border-radius:999px; background:var(--accent-soft);
+          color:var(--ink); border:1px solid var(--accent); cursor:grab; user-select:none; touch-action:none; font-weight:550; }
+  .pill:active { cursor:grabbing; }
+  .pill .x { border:0; background:none; color:var(--muted); cursor:pointer; font-size:15px; line-height:1; padding:0 4px; border-radius:50%; }
+  .pill .x:hover { color:var(--bad); }
+  .pill.dragging-src { opacity:.35; }
+  .pill.selected { outline:3px solid var(--accent); }
+  .pill .from { font-size:11px; color:var(--muted); font-weight:400; }
+  .drag-ghost { position:fixed; z-index:1000; pointer-events:none; left:0; top:0; padding:5px 14px; border-radius:999px; background:var(--accent); color:#fff;
+           font-weight:600; box-shadow:0 8px 24px rgba(0,0,0,.28); transform:translate(-50%,-130%); white-space:nowrap; }
+  .open-slot { color:var(--muted); font-style:italic; }
+  body.dragging { user-select:none; cursor:grabbing; }
+  body.dragging tr.crow.valid td:first-child { box-shadow: inset 4px 0 0 var(--ok); }
+  body.dragging tr.crow.valid { background:var(--ok-soft); }
+  body.dragging tr.crow.dim { opacity:.55; }
+  body.dragging tr.crow.hover { outline:2px solid var(--accent); outline-offset:-2px; background:var(--accent-soft); opacity:1; }
+  body.placing tr.crow { cursor:copy; }
+  body.placing tr.crow:hover { background:var(--accent-soft); }
+  .warn-line { font-size:12px; color:var(--warn); margin-top:3px; }
+  .warn-line.bad { color:var(--bad); }
+  details.alts summary { cursor:pointer; color:var(--accent); font-size:13px; }
+  details.alts .opt { display:flex; align-items:center; gap:6px; font-size:13px; padding:2px 0; }
+  details.alts button.use { border:1px solid var(--line); background:var(--card); color:var(--accent); border-radius:6px; font-size:12px; cursor:pointer; padding:1px 8px; }
+
+  /* ---- tray ---- */
+  #tray { position:fixed; left:0; right:0; bottom:0; z-index:500; background:var(--card); border-top:2px solid var(--line); box-shadow:0 -6px 20px rgba(0,0,0,.10); }
+  #tray.hover { border-top-color:var(--accent); background:var(--accent-soft); }
+  #tray .inner { max-width:1100px; margin:0 auto; padding:10px 16px 12px; }
+  #tray .bar { display:flex; gap:10px; align-items:center; justify-content:space-between; flex-wrap:wrap; margin-bottom:8px; }
+  #tray .bar b { font-size:14px; }
+  #tray .tools { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  #chips { display:flex; gap:8px; flex-wrap:wrap; min-height:34px; max-height:84px; overflow-y:auto; align-items:center; }
+  #chips .empty { color:var(--muted); font-size:14px; }
+  .btn.small { padding:6px 12px; font-size:13px; }
+  select.add { padding:6px 8px; border:1px solid var(--line); border-radius:8px; background:var(--card); color:var(--ink); font:inherit; font-size:13px; max-width:190px; }
+  #toast { position:fixed; left:50%; bottom:200px; transform:translateX(-50%); background:var(--ink); color:var(--bg); padding:8px 16px; border-radius:8px;
+           font-size:14px; opacity:0; transition:opacity .2s; z-index:900; pointer-events:none; max-width:90vw; }
+  #toast.show { opacity:.95; }
+  .unsaved { display:none; }
+  .unsaved.on { display:inline-block; }
   .tutorgrid { display:grid; grid-template-columns:repeat(auto-fill,minmax(300px,1fr)); gap:12px; }
   .tcard { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px 16px; }
   .tcard h3 { margin:0 0 2px; font-size:16px; }
   .tcard ul { margin:8px 0 0; padding:0; list-style:none; }
   .tcard li { display:flex; justify-content:space-between; gap:8px; padding:4px 0; border-top:1px solid var(--line); font-size:14px; }
-  @media print { header, .tabs, .search, .btn { display:none; } .panel { display:block !important; } }
+  .tcard.over { border-color:var(--bad); }
+  @media print { header, .tabs, .search, .btn, #tray, #toast, .howto { display:none !important; } .panel { display:block !important; } body { padding-bottom:0; } }
 </style>
 {% endblock %}
 
 {% block content %}
-{% set s = result.stats %}
 <div class="top">
   <div>
-    <h1>Draft placements</h1>
-    <p class="lead" style="margin:0">From <b>{{ filename }}</b> — a starting point to review, not a final answer.</p>
+    <h1>Draft placements <span class="badge warn unsaved" id="unsaved">edited &mdash; not exported</span></h1>
+    <p class="lead" style="margin:0">From <b>{{ filename }}</b> &mdash; a starting point to review and adjust.</p>
   </div>
-  <div><a class="btn ghost" href="/">Upload another file</a> <button class="btn" onclick="window.print()">Print</button></div>
+  <div><a class="btn ghost" href="/" id="newfile">Upload another file</a></div>
 </div>
 
 <div class="stats">
-  <div class="stat"><b>{{ s.filled }}<small class="muted" style="font-size:15px"> / {{ s.total }}</small></b><span>classes with a tutor</span></div>
-  <div class="stat"><b>{{ s.tutors_placed }}</b><span>tutors placed</span></div>
-  <div class="stat"><b>{{ s.contested }}</b><span>classes with equally good alternatives</span></div>
-  <div class="stat"><b>{{ s.cat }}</b><span>Canvas-attached (CAT) placements</span></div>
-  <div class="stat"><b>{{ s.unfilled }}</b><span>classes left open</span></div>
+  <div class="stat"><b><span id="s-filled">0</span><small class="muted" style="font-size:15px"> / <span id="s-total">0</span></small></b><span>classes with a tutor</span></div>
+  <div class="stat"><b id="s-tutors">0</b><span>tutors with a class</span></div>
+  <div class="stat"><b id="s-warn">0</b><span>warnings to review</span></div>
+  <div class="stat"><b id="s-cat">0</b><span>Canvas-attached (CAT) placements</span></div>
+  <div class="stat"><b id="s-open">0</b><span>classes left open</span></div>
 </div>
 
-<div class="note">
-  Tutors got their <b>1st choice in {{ result.choice_counts[1] }}</b>, 2nd in {{ result.choice_counts[2] }}, 3rd in {{ result.choice_counts[3] }} placements.
-  {% if not result.tutor_sheet_loaded %}The “Tutors” sheet was empty, so every tutor was capped at 2 classes with no seniority tie-break.{% endif %}
-</div>
+<div class="note" id="choice-note"></div>
+
+{% if result.canceled %}
+<p class="muted" style="font-size:14px;margin:-6px 0 16px">Skipped {{ result.canceled|length }} canceled class{{ 'es' if result.canceled|length != 1 }} (struck through in your sheet): {{ result.canceled|join(', ') }}.</p>
+{% endif %}
 
 {% if result.notices %}
 <details class="notice" {{ 'open' if result.notices|length <= 3 }}>
-  <summary><b>{{ result.notices|length }} thing{{ 's' if result.notices|length != 1 }} to check in the Link Group column</b></summary>
+  <summary><b>{{ result.notices|length }} thing{{ 's' if result.notices|length != 1 }} to check in the file</b></summary>
   <ul>{% for n in result.notices %}<li>{{ n }}</li>{% endfor %}</ul>
 </details>
 {% endif %}
 
-<div class="tiers">
-  {% for t in result.tier_summary %}
-    <span class="badge {{ 'ok' if t.filled == t.total else 'warn' }}">{{ t.tier }}: {{ t.filled }}/{{ t.total }} filled</span>
-  {% endfor %}
-</div>
+<div class="tiers" id="tier-badges"></div>
 
 <div class="tabs" role="tablist">
   <button class="tab active" data-panel="p-class">By class</button>
   <button class="tab" data-panel="p-tutor">By tutor</button>
-  <button class="tab" data-panel="p-attn">Needs attention ({{ s.unfilled + s.cat + s.contested }})</button>
+  <button class="tab" data-panel="p-attn" id="tab-attn">Needs attention</button>
 </div>
 
 <section class="panel active" id="p-class">
-  <input class="search" type="search" placeholder="Filter by class or tutor…" data-filter="t-class">
+  <p class="howto">Drag a tutor&rsquo;s name onto another class to move them, or drop it in the tray below to set it aside. Dropping on a class that already has a tutor replaces them, and the replaced tutor goes to the tray. You can also click a name in the tray, then click a class. Any move is allowed; risky ones show a warning.</p>
+  <input class="search" type="search" placeholder="Filter by class or tutor&hellip;" id="filter">
   <div class="scroll"><table id="t-class">
-    <thead><tr><th>Class</th><th>Assigned tutor</th><th>Choice</th><th>Equally good alternatives</th></tr></thead>
-    <tbody>
-    {% set ns = namespace(tier=None) %}
-    {% for r in result.rows %}
-      {% if r.tier != ns.tier %}{% set ns.tier = r.tier %}<tr class="tierhead"><td colspan="4">{{ r.tier }}</td></tr>{% endif %}
-      <tr>
-        <td><b>{{ r.class }}</b>
-          {% if r.kept_together %}<br><span class="badge" title="Kept with {{ r.linked_with|join(', ') }} and counts as one class toward Max Classes">linked: {{ r.link_group }}</span>{% endif %}</td>
-        <td>{% if r.tutor %}{{ r.tutor }}{% if r.cat %} <span class="badge warn" title="Tutor wrote (CAT) for this class">CAT</span>{% endif %}
-            {% else %}<span class="badge bad">Open</span>{% endif %}</td>
-        <td>{% if r.tutor %}<span class="badge {{ 'ok' if r.choice == 1 else '' }}">{{ r.choice }}{{ {1:'st',2:'nd',3:'rd'}[r.choice] }}</span>{% endif %}</td>
-        <td>
-          {% if r.alternatives %}
-            <details><summary>{{ r.alternatives|length }} other option{{ 's' if r.alternatives|length > 1 }}</summary>
-              <ul class="alt">
-              {% for a in r.alternatives %}
-                <li>{{ a.tutor }} <span class="muted">({{ a.choice }}{{ {1:'st',2:'nd',3:'rd'}[a.choice] }} choice)</span>
-                  {% if a.cat %}<span class="badge warn">CAT</span>{% endif %}
-                  {% if a.recommended %}<span class="badge ok" title="Keeps related lecture/lab sections with one tutor">keeps sections together</span>{% endif %}</li>
-              {% endfor %}
-              </ul></details>
-          {% elif r.tutor %}<span class="muted">—</span>
-          {% else %}<span class="muted">{{ r.num_candidates }} tutor{{ 's' if r.num_candidates != 1 }} listed, all at capacity</span>{% endif %}
-        </td>
-      </tr>
-    {% endfor %}
-    </tbody></table></div>
+    <thead><tr><th>Class</th><th>Assigned tutor</th><th>Choice</th><th>Notes</th></tr></thead>
+    <tbody id="class-body"></tbody>
+  </table></div>
 </section>
 
 <section class="panel" id="p-tutor">
-  <input class="search" type="search" placeholder="Filter tutors…" data-filter="g-tutor">
-  <div class="tutorgrid" id="g-tutor">
-    {% for t in result.tutors %}
-      <div class="tcard" data-text="{{ t.name|lower }}">
-        <h3>{{ t.name }}</h3>
-        <span class="muted">{{ t.load }} of {{ t.max }} max{% if t.classes|length != t.load %} ({{ t.classes|length }} sections){% endif %}{% if t.seniority %} · {{ t.seniority }}{% endif %}</span>
-        <ul>{% for c in t.classes %}
-          <li><span>{{ c.class }}{% if c.kept_together %} <span class="badge" title="Linked with {{ c.linked_with|join(', ') }}">linked</span>{% endif %}{% if c.cat %} <span class="badge warn">CAT</span>{% endif %}</span>
-              <span class="muted">{{ c.choice }}{{ {1:'st',2:'nd',3:'rd'}[c.choice] }}</span></li>
-        {% endfor %}</ul>
+  <p class="howto">Read-only summary. Make changes on the &ldquo;By class&rdquo; tab.</p>
+  <div class="tutorgrid" id="tutor-grid"></div>
+</section>
+
+<section class="panel" id="p-attn"></section>
+
+<div id="tray" aria-label="Tray of tutors waiting for a class">
+  <div class="inner">
+    <div class="bar">
+      <b>Tray <span class="muted" style="font-weight:400">&mdash; names waiting for a class (drop one here to set it aside)</span></b>
+      <div class="tools">
+        <select class="add" id="add-tutor" aria-label="Add a tutor to the tray"></select>
+        <button class="btn ghost small" id="undo" disabled>Undo</button>
+        <button class="btn ghost small" id="reset">Reset to draft</button>
+        <button class="btn small" id="export">Export to Excel</button>
       </div>
-    {% endfor %}
+    </div>
+    <div id="chips"></div>
   </div>
-  {% if result.unplaced_tutors %}
-    <p class="muted">Listed by classes but not placed: {{ result.unplaced_tutors|join(', ') }}</p>
-  {% endif %}
-</section>
+</div>
+<div id="toast" role="status" aria-live="polite"></div>
 
-<section class="panel" id="p-attn">
-  <h2>Classes left open ({{ s.unfilled }})</h2>
-  {% if result.unfilled %}
-  <div class="scroll"><table><thead><tr><th>Class</th><th>Tier</th><th>Tutors who listed it</th></tr></thead><tbody>
-    {% for r in result.unfilled %}<tr><td><b>{{ r.class }}</b></td><td>{{ r.tier }}</td><td>{{ r.candidates|join(', ') }}</td></tr>{% endfor %}
-  </tbody></table></div>
-  {% else %}<p class="muted">Every class with a candidate has a tutor.</p>{% endif %}
-
-  <h2 style="margin-top:24px">Canvas-attached placements ({{ s.cat }})</h2>
-  <p class="muted" style="margin-top:0">The tutor marked “(CAT)”, and no better-fitting option was available.</p>
-  <div class="scroll"><table><thead><tr><th>Class</th><th>Tutor</th></tr></thead><tbody>
-    {% for r in result.rows if r.cat %}<tr><td><b>{{ r.class }}</b></td><td>{{ r.tutor }}</td></tr>
-    {% else %}<tr><td colspan="2" class="muted">None.</td></tr>{% endfor %}
-  </tbody></table></div>
-</section>
-
+<script type="application/json" id="data">{{ result.payload|tojson }}</script>
+<script type="application/json" id="meta">{{ {"filename": filename}|tojson }}</script>
 <script>
+(function () {
+  "use strict";
+  var DATA = JSON.parse(document.getElementById("data").textContent);
+  var FILENAME = JSON.parse(document.getElementById("meta").textContent).filename;
+  var classes = DATA.classes;
+  var byId = {};
+  classes.forEach(function (c) { byId[c.id] = c; });
+  var tutorInfo = {};
+  DATA.tutors.forEach(function (t) { tutorInfo[t.name] = t; });
+  var ORD = { 1: "1st", 2: "2nd", 3: "3rd" };
+
+  // ---- state -----------------------------------------------------------
+  var state = { assign: {}, tray: [] };   // assign: classId -> tutor name or null; tray: [{id,name,from}]
+  var nextChip = 1;
+  classes.forEach(function (c) { state.assign[c.id] = c.tutor || null; });
+  var original = JSON.parse(JSON.stringify(state.assign));
+  var history = [];
+  var lastSaved = serialize();
+  var selectedChip = null;
+  var filterText = "";
+
+  function serialize() { return JSON.stringify([state.assign, state.tray.map(function (c) { return c.name; })]); }
+  function isDirty() { return serialize() !== lastSaved; }
+
+  // ---- tiny DOM helper (uses textContent, so names can never inject HTML) ----
+  function h(tag, attrs) {
+    var el = document.createElement(tag);
+    if (attrs) Object.keys(attrs).forEach(function (k) {
+      if (k === "class") el.className = attrs[k];
+      else if (k === "text") el.textContent = attrs[k];
+      else if (k.indexOf("data-") === 0) el.setAttribute(k, attrs[k]);
+      else el[k] = attrs[k];
+    });
+    for (var i = 2; i < arguments.length; i++) {
+      var ch = arguments[i];
+      if (ch == null || ch === false) continue;
+      el.appendChild(typeof ch === "string" ? document.createTextNode(ch) : ch);
+    }
+    return el;
+  }
+
+  // ---- derived values ----------------------------------------------------
+  // Sections that share a Link Group and the same tutor count as ONE class.
+  function slotKey(c) { return c.group ? "g:" + c.group : "c:" + c.id; }
+  function loads() {
+    var sets = {};
+    classes.forEach(function (c) {
+      var t = state.assign[c.id];
+      if (!t) return;
+      (sets[t] = sets[t] || {})[slotKey(c)] = c.id;
+    });
+    return sets;
+  }
+  function maxFor(t) { return tutorInfo[t] ? tutorInfo[t].max : 2; }
+  function originallyTogether(c) {
+    var t = original[c.id];
+    return !!t && c.siblings.length > 0 && c.siblings.every(function (s) { return original[s] === t; });
+  }
+  function warningsFor(c, L) {
+    var t = state.assign[c.id], w = [];
+    if (!t) return w;
+    if (!(t in c.cands)) w.push({ k: "bad", text: t + " did not list this class" });
+    else if (c.cat.indexOf(t) !== -1) w.push({ k: "warn", text: t + " marked this class (CAT)" });
+    var n = Object.keys(L[t] || {}).length;
+    if (n > maxFor(t)) w.push({ k: "bad", text: t + " has " + n + " classes (max " + maxFor(t) + ")" });
+    if (originallyTogether(c)) {
+      var apart = c.siblings.filter(function (s) { return state.assign[s] !== t; });
+      if (apart.length) w.push({ k: "warn", text: "Linked with " + apart.join(", ") + ", now a different tutor" });
+    }
+    return w;
+  }
+
+  // ---- changes (every change goes through here so undo works) -------------
+  function commit(fn) {
+    history.push(JSON.stringify({ a: state.assign, t: state.tray, n: nextChip }));
+    if (history.length > 100) history.shift();
+    fn();
+    selectedChip = null;
+    render();
+  }
+  function undo() {
+    if (!history.length) return;
+    var s = JSON.parse(history.pop());
+    state.assign = s.a; state.tray = s.t; nextChip = s.n; selectedChip = null;
+    render(); toast("Undid last change");
+  }
+  function addChip(name, from) { state.tray.push({ id: nextChip++, name: name, from: from }); }
+
+  // Put `name` into class `classId`. source = {type:"class", id} | {type:"tray", chip} | {type:"new"}
+  function place(classId, name, source) {
+    if (source.type === "class" && source.id === classId) return;
+    var prev = state.assign[classId];
+    commit(function () {
+      if (source.type === "class") state.assign[source.id] = null;
+      if (source.type === "tray") state.tray = state.tray.filter(function (c) { return c.id !== source.chip; });
+      state.assign[classId] = name;
+      if (prev && prev !== name) addChip(prev, "replaced in " + classId);
+      else if (prev === name && source.type !== "new") { /* same tutor already there */ }
+    });
+    toast(prev && prev !== name ? name + " placed in " + classId + "; " + prev + " moved to the tray" : name + " placed in " + classId);
+  }
+  function toTray(classId) {
+    var name = state.assign[classId];
+    if (!name) return;
+    commit(function () { state.assign[classId] = null; addChip(name, "removed from " + classId); });
+    toast(name + " moved to the tray");
+  }
+
+  // ---- rendering -----------------------------------------------------------
+  function render() {
+    var L = loads();
+    renderClasses(L); renderTutors(L); renderAttention(L); renderTray(); renderStats(L);
+    document.getElementById("undo").disabled = history.length === 0;
+    document.getElementById("unsaved").classList.toggle("on", isDirty());
+    document.body.classList.toggle("placing", selectedChip !== null);
+  }
+
+  function pill(name, extra) {
+    var p = h("span", { class: "pill", text: name });
+    if (extra) Object.keys(extra).forEach(function (k) { p.setAttribute(k, extra[k]); });
+    return p;
+  }
+
+  function renderClasses(L) {
+    var body = document.getElementById("class-body");
+    body.textContent = "";
+    var lastTier = null, q = filterText.toLowerCase();
+    DATA.classes.forEach(function (c) {
+      var t = state.assign[c.id];
+      if (q && c.id.toLowerCase().indexOf(q) === -1 && (t || "").toLowerCase().indexOf(q) === -1) return;
+      if (!q && c.tier !== lastTier) {
+        lastTier = c.tier;
+        body.appendChild(h("tr", { class: "tierhead" }, h("td", { colSpan: 4, text: c.tier })));
+      }
+      var w = warningsFor(c, L);
+      var nameCell = h("td", null, h("b", { text: c.id }),
+        c.group ? h("div", null, h("span", { class: "badge sm link", text: "linked: " + c.group, title: "Linked with " + c.siblings.concat(c.unstaffed).join(", ") })) : null,
+        c.unstaffed.length ? h("div", { class: "muted", style: "font-size:12px", text: "also linked: " + c.unstaffed.join(", ") + " (no tutor names, not placed)" }) : null);
+
+      var tutorCell = h("td");
+      if (t) {
+        var p = pill(t, { "data-src": "class", "data-class": c.id });
+        p.appendChild(h("button", { class: "x", title: "Move to tray", type: "button", text: "×", "data-x": c.id }));
+        tutorCell.appendChild(p);
+      } else {
+        tutorCell.appendChild(h("span", { class: "badge bad", text: "Open" }));
+      }
+
+      var choiceCell = h("td");
+      if (t) {
+        var ch = c.cands[t];
+        choiceCell.appendChild(h("span", { class: "badge" + (ch === 1 ? " ok" : ""), text: ch ? ORD[ch] : "not listed" }));
+      }
+
+      var notes = h("td");
+      w.forEach(function (x) { notes.appendChild(h("div", { class: "warn-line " + (x.k === "bad" ? "bad" : ""), text: "⚠ " + x.text })); });
+      var alts = c.alts.filter(function (a) { return a.tutor !== t; });
+      if (alts.length) {
+        var d = h("details", { class: "alts" }, h("summary", { text: alts.length + " other equally good option" + (alts.length > 1 ? "s" : "") }));
+        alts.forEach(function (a) {
+          var use = h("button", { class: "use", type: "button", text: "Use", "data-use": c.id, "data-tutor": a.tutor });
+          d.appendChild(h("div", { class: "opt" }, use, a.tutor, h("span", { class: "muted", text: "(" + ORD[a.choice] + " choice)" }),
+            a.cat ? h("span", { class: "badge warn sm", text: "CAT" }) : null,
+            a.recommended ? h("span", { class: "badge ok sm", text: "keeps sections together" }) : null));
+        });
+        notes.appendChild(d);
+      }
+      var tr = h("tr", { class: "crow", "data-class": c.id }, nameCell, tutorCell, choiceCell, notes);
+      body.appendChild(tr);
+    });
+  }
+
+  function renderTutors(L) {
+    var grid = document.getElementById("tutor-grid");
+    grid.textContent = "";
+    var names = DATA.tutors.map(function (t) { return t.name; });
+    var placed = names.filter(function (n) { return L[n]; }), idle = names.filter(function (n) { return !L[n]; });
+    function card(n) {
+      var ids = classes.filter(function (c) { return state.assign[c.id] === n; });
+      var load = Object.keys(L[n] || {}).length, mx = maxFor(n);
+      var ul = h("ul");
+      ids.forEach(function (c) {
+        var ch = c.cands[n];
+        ul.appendChild(h("li", null, h("span", { text: c.id }), h("span", { class: "muted", text: ch ? ORD[ch] : "not listed" })));
+      });
+      var info = tutorInfo[n];
+      return h("div", { class: "tcard" + (load > mx ? " over" : "") },
+        h("h3", { text: n }),
+        h("span", { class: "muted", text: load + " of " + mx + " max" + (ids.length !== load ? " (" + ids.length + " sections)" : "") + (info && info.seniority ? " · " + info.seniority : "") }),
+        ul);
+    }
+    placed.forEach(function (n) { grid.appendChild(card(n)); });
+    if (idle.length) {
+      grid.appendChild(h("div", { class: "tcard", style: "grid-column:1/-1" },
+        h("h3", { text: "No class yet (" + idle.length + ")" }),
+        h("span", { class: "muted", text: idle.join(", ") })));
+    }
+  }
+
+  function renderAttention(L) {
+    var sec = document.getElementById("p-attn");
+    sec.textContent = "";
+    var open = classes.filter(function (c) { return !state.assign[c.id]; });
+    sec.appendChild(h("h2", { text: "Classes left open (" + open.length + ")" }));
+    if (open.length) {
+      var tb = h("tbody");
+      open.forEach(function (c) {
+        tb.appendChild(h("tr", null, h("td", null, h("b", { text: c.id })), h("td", { text: c.tier }), h("td", { text: Object.keys(c.cands).join(", ") })));
+      });
+      sec.appendChild(h("div", { class: "scroll" }, h("table", null,
+        h("thead", null, h("tr", null, h("th", { text: "Class" }), h("th", { text: "Tier" }), h("th", { text: "Tutors who listed it" }))), tb)));
+    } else sec.appendChild(h("p", { class: "muted", text: "Every class has a tutor." }));
+
+    var warned = [];
+    classes.forEach(function (c) { warningsFor(c, L).forEach(function (x) { warned.push([c.id, x]); }); });
+    sec.appendChild(h("h2", { style: "margin-top:24px", text: "Warnings (" + warned.length + ")" }));
+    if (warned.length) {
+      var tb2 = h("tbody");
+      warned.forEach(function (p) { tb2.appendChild(h("tr", null, h("td", null, h("b", { text: p[0] })), h("td", { text: p[1].text }))); });
+      sec.appendChild(h("div", { class: "scroll" }, h("table", null,
+        h("thead", null, h("tr", null, h("th", { text: "Class" }), h("th", { text: "Warning" }))), tb2)));
+    } else sec.appendChild(h("p", { class: "muted", text: "No warnings." }));
+    document.getElementById("tab-attn").textContent = "Needs attention (" + (open.length + warned.length) + ")";
+  }
+
+  function renderTray() {
+    var box = document.getElementById("chips");
+    box.textContent = "";
+    if (!state.tray.length) box.appendChild(h("span", { class: "empty", text: "Empty. Names you remove or replace will appear here." }));
+    state.tray.forEach(function (c) {
+      var p = pill(c.name, { "data-src": "tray", "data-chip": String(c.id), title: c.from });
+      p.appendChild(h("span", { class: "from", text: c.from }));
+      if (selectedChip === c.id) p.classList.add("selected");
+      box.appendChild(p);
+    });
+    var sel = document.getElementById("add-tutor");
+    if (!sel.options.length) {
+      sel.appendChild(h("option", { value: "", text: "Add a tutor…" }));
+      DATA.tutors.forEach(function (t) { sel.appendChild(h("option", { value: t.name, text: t.name })); });
+    }
+  }
+
+  function renderStats(L) {
+    var filled = classes.filter(function (c) { return state.assign[c.id]; });
+    var warnCount = 0, cat = 0, choices = { 1: 0, 2: 0, 3: 0 }, unlisted = 0;
+    classes.forEach(function (c) {
+      var t = state.assign[c.id];
+      if (!t) return;
+      var w = warningsFor(c, L); warnCount += w.length;
+      if (c.cat.indexOf(t) !== -1) cat++;
+      if (c.cands[t]) choices[c.cands[t]]++; else unlisted++;
+    });
+    document.getElementById("s-filled").textContent = filled.length;
+    document.getElementById("s-total").textContent = classes.length;
+    document.getElementById("s-tutors").textContent = Object.keys(L).length;
+    document.getElementById("s-warn").textContent = warnCount;
+    document.getElementById("s-cat").textContent = cat;
+    document.getElementById("s-open").textContent = classes.length - filled.length;
+    document.getElementById("choice-note").textContent =
+      "Tutors have their 1st choice in " + choices[1] + " placements, 2nd in " + choices[2] + ", 3rd in " + choices[3] +
+      (unlisted ? ", and " + unlisted + " placement" + (unlisted > 1 ? "s were" : " was") + " not on the tutor’s list" : "") + ".";
+    var tb = document.getElementById("tier-badges");
+    tb.textContent = "";
+    DATA.tier_order.forEach(function (tier) {
+      var all = classes.filter(function (c) { return c.tier === tier; });
+      if (!all.length) return;
+      var done = all.filter(function (c) { return state.assign[c.id]; }).length;
+      tb.appendChild(h("span", { class: "badge " + (done === all.length ? "ok" : "warn"), text: tier + ": " + done + "/" + all.length + " filled" }));
+    });
+  }
+
+  // ---- toast -------------------------------------------------------------
+  var toastTimer = null;
+  function toast(msg) {
+    var el = document.getElementById("toast");
+    el.textContent = msg; el.classList.add("show");
+    clearTimeout(toastTimer); toastTimer = setTimeout(function () { el.classList.remove("show"); }, 2600);
+  }
+
+  // ---- dragging (mouse, pen and touch) ------------------------------------
+  var drag = null;
+  var tray = document.getElementById("tray");
+
+  function sourceOf(el) {
+    if (el.getAttribute("data-src") === "class") return { type: "class", id: el.getAttribute("data-class") };
+    return { type: "tray", chip: parseInt(el.getAttribute("data-chip"), 10) };
+  }
+  function nameOf(src) {
+    if (src.type === "class") return state.assign[src.id];
+    var c = state.tray.filter(function (x) { return x.id === src.chip; })[0];
+    return c && c.name;
+  }
+
+  document.addEventListener("pointerdown", function (e) {
+    if (e.button !== 0 && e.pointerType === "mouse") return;
+    if (e.target.closest(".x")) return;
+    var pl = e.target.closest(".pill");
+    if (!pl) return;
+    var src = sourceOf(pl), name = nameOf(src);
+    if (!name) return;
+    drag = { active: false, src: src, name: name, el: pl, x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY, ghost: null, raf: null };
+  });
+
+  document.addEventListener("pointermove", function (e) {
+    if (!drag) return;
+    drag.x = e.clientX; drag.y = e.clientY;
+    if (!drag.active) {
+      if (Math.abs(e.clientX - drag.sx) + Math.abs(e.clientY - drag.sy) < 6) return;
+      startDrag();
+    }
+    e.preventDefault();
+    moveGhost();
+  }, { passive: false });
+
+  function startDrag() {
+    drag.active = true;
+    selectedChip = null;
+    drag.ghost = h("div", { class: "drag-ghost", text: drag.name });
+    document.body.appendChild(drag.ghost);
+    drag.el.classList.add("dragging-src");
+    document.body.classList.add("dragging");
+    document.body.classList.remove("placing");
+    // Light up the classes this tutor listed; dim the others (still droppable).
+    document.querySelectorAll("tr.crow").forEach(function (row) {
+      var c = byId[row.getAttribute("data-class")];
+      row.classList.add(drag.name in c.cands ? "valid" : "dim");
+    });
+    drag.raf = requestAnimationFrame(autoScroll);
+  }
+  function moveGhost() {
+    drag.ghost.style.left = drag.x + "px";
+    drag.ghost.style.top = drag.y + "px";
+    updateHover();
+  }
+  function targetAt(x, y) {
+    var el = document.elementFromPoint(x, y);
+    if (!el) return null;
+    if (el.closest("#tray")) return { type: "tray" };
+    var row = el.closest("tr.crow");
+    return row ? { type: "class", id: row.getAttribute("data-class"), row: row } : null;
+  }
+  function updateHover() {
+    document.querySelectorAll(".hover").forEach(function (n) { n.classList.remove("hover"); });
+    var t = targetAt(drag.x, drag.y);
+    if (!t) return;
+    (t.type === "tray" ? tray : t.row).classList.add("hover");
+  }
+  // Scroll the page by itself when the cursor nears the top or bottom edge.
+  function autoScroll() {
+    if (!drag || !drag.active) return;
+    var edge = 90, trayTop = tray.getBoundingClientRect().top, v = 0;
+    if (drag.y < edge) v = -Math.ceil((edge - drag.y) / 5);
+    else if (drag.y > trayTop - edge && drag.y < trayTop) v = Math.ceil((drag.y - (trayTop - edge)) / 5);
+    if (v) { window.scrollBy(0, v); updateHover(); }
+    drag.raf = requestAnimationFrame(autoScroll);
+  }
+  function endDrag(drop) {
+    if (!drag) return;
+    var d = drag; drag = null;
+    cancelAnimationFrame(d.raf);
+    if (d.ghost) d.ghost.remove();
+    d.el.classList.remove("dragging-src");
+    document.body.classList.remove("dragging");
+    document.querySelectorAll("tr.crow").forEach(function (r) { r.classList.remove("valid", "dim", "hover"); });
+    tray.classList.remove("hover");
+    if (!d.active) {
+      // a plain click on a tray name selects it for click-to-place
+      if (d.src.type === "tray") { selectedChip = selectedChip === d.src.chip ? null : d.src.chip; render(); }
+      return;
+    }
+    if (!drop) return;
+    var t = targetAt(d.x, d.y);
+    if (!t) return;
+    if (t.type === "tray") { if (d.src.type === "class") toTray(d.src.id); }
+    else place(t.id, d.name, d.src);
+  }
+  document.addEventListener("pointerup", function () { endDrag(true); });
+  document.addEventListener("pointercancel", function () { endDrag(false); });
+  document.addEventListener("keydown", function (e) {
+    if (e.key === "Escape") { if (drag) endDrag(false); else if (selectedChip !== null) { selectedChip = null; render(); } }
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z" && !/INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName)) { e.preventDefault(); undo(); }
+  });
+  // Stop the browser from starting its own native drag of text/links.
+  document.addEventListener("dragstart", function (e) { e.preventDefault(); });
+
+  // ---- clicks ------------------------------------------------------------
+  document.addEventListener("click", function (e) {
+    var x = e.target.closest("[data-x]");
+    if (x) { toTray(x.getAttribute("data-x")); return; }
+    var use = e.target.closest("[data-use]");
+    if (use) { place(use.getAttribute("data-use"), use.getAttribute("data-tutor"), { type: "new" }); return; }
+    if (selectedChip !== null) {
+      var row = e.target.closest("tr.crow");
+      if (row && !e.target.closest(".pill, details, button")) {
+        var chip = state.tray.filter(function (c) { return c.id === selectedChip; })[0];
+        if (chip) place(row.getAttribute("data-class"), chip.name, { type: "tray", chip: chip.id });
+      }
+    }
+  });
+
+  document.getElementById("add-tutor").addEventListener("change", function (e) {
+    var name = e.target.value; e.target.value = "";
+    if (!name) return;
+    commit(function () { addChip(name, "added by you"); });
+    toast(name + " added to the tray");
+  });
+  document.getElementById("undo").addEventListener("click", undo);
+  document.getElementById("reset").addEventListener("click", function () {
+    if (!isDirty() && !history.length) return;
+    if (!confirm("Discard all your changes and go back to the algorithm's draft?")) return;
+    commit(function () { state.assign = JSON.parse(JSON.stringify(original)); state.tray = []; });
+    toast("Reset to the draft");
+  });
+  document.getElementById("filter").addEventListener("input", function (e) { filterText = e.target.value; renderClasses(loads()); });
   document.querySelectorAll(".tab").forEach(function (tab) {
     tab.addEventListener("click", function () {
       document.querySelectorAll(".tab").forEach(function (t) { t.classList.remove("active"); });
       document.querySelectorAll(".panel").forEach(function (p) { p.classList.remove("active"); });
       tab.classList.add("active");
-      document.getElementById(tab.dataset.panel).classList.add("active");
+      document.getElementById(tab.getAttribute("data-panel")).classList.add("active");
     });
   });
-  document.querySelectorAll(".search").forEach(function (box) {
-    box.addEventListener("input", function () {
-      var q = box.value.toLowerCase(), target = document.getElementById(box.dataset.filter);
-      target.querySelectorAll("tbody tr:not(.tierhead), .tcard").forEach(function (el) {
-        el.style.display = el.textContent.toLowerCase().indexOf(q) === -1 ? "none" : "";
-      });
-      target.querySelectorAll(".tierhead").forEach(function (h) { h.style.display = q ? "none" : ""; });
-    });
+
+  // ---- export --------------------------------------------------------------
+  document.getElementById("export").addEventListener("click", function () {
+    var L = loads(), btn = this;
+    var body = {
+      source: FILENAME,
+      assignments: classes.map(function (c) {
+        var t = state.assign[c.id];
+        return { "class": c.id, tier: c.tier, tutor: t, choice: t ? (c.cands[t] || null) : null,
+                 cat: !!t && c.cat.indexOf(t) !== -1, group: c.group || "",
+                 changed: (state.assign[c.id] || null) !== (original[c.id] || null),
+                 notes: warningsFor(c, L).map(function (x) { return x.text; })
+                          .concat(c.unstaffed.length ? ["Also linked, no tutor names so not placed: " + c.unstaffed.join(", ")] : []) };
+      }),
+      tutors: DATA.tutors.map(function (t) {
+        return { name: t.name, load: Object.keys(L[t.name] || {}).length, max: t.max,
+                 classes: classes.filter(function (c) { return state.assign[c.id] === t.name; }).map(function (c) { return c.id; }) };
+      }),
+      tray: state.tray.map(function (c) { return c.name; }),
+      canceled: DATA.canceled || []
+    };
+    btn.disabled = true; btn.textContent = "Preparing…";
+    fetch("/export", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
+      .then(function (r) { if (!r.ok) return r.json().then(function (j) { throw new Error(j.error || "Export failed"); }); return r.blob(); })
+      .then(function (blob) {
+        var a = document.createElement("a");
+        a.href = URL.createObjectURL(blob); a.download = "tutor_placements.xlsx";
+        document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000);
+        lastSaved = serialize(); render(); toast("Exported tutor_placements.xlsx");
+      })
+      .catch(function (err) { toast("Could not export: " + err.message); })
+      .then(function () { btn.disabled = false; btn.textContent = "Export to Excel"; });
   });
+
+  // ---- leaving the page ----------------------------------------------------
+  window.addEventListener("beforeunload", function (e) {
+    if (isDirty()) { e.preventDefault(); e.returnValue = ""; }
+  });
+
+  render();
+})();
 </script>
 {% endblock %}

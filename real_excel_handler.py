@@ -180,6 +180,8 @@ def find_related_sections(file_path, sheet_name="Choices Round 1"):
         ]
 
     dataframe["_class_id"] = dataframe["Subject"].astype(str) + " " + dataframe["Section"].astype(str)
+    canceled = set(find_canceled_class_ids(file_path, sheet_name))
+    dataframe = dataframe[~dataframe["_class_id"].str.strip().isin(canceled)]
     dataframe["_is_eu"] = dataframe["Section"].apply(_is_eu_section)
 
     group_by_class_id = {}
@@ -299,6 +301,60 @@ def tutor_names_from_classes(classes):
     return sorted({name for c in classes for name, _ in c["candidates"]})
 
 
+def find_canceled_class_ids(file_path, sheet_name="Choices Round 1"):
+    """
+    Class ids (e.g. "MATH 350 2") whose Subject or Section cell is struck
+    through in Excel. A struck-through class has been canceled and must
+    not be counted at all - not as a class to fill, and not as "open".
+
+    pandas cannot see cell formatting, so this reads the workbook directly
+    with openpyxl. Only the class-name cells decide it: a struck-through
+    TUTOR name on an otherwise normal class does not cancel the class.
+
+    Returns the ids in sheet order.
+    """
+    import openpyxl
+
+    workbook = openpyxl.load_workbook(file_path, read_only=True)
+    try:
+        rows = list(workbook[sheet_name].iter_rows())
+    finally:
+        workbook.close()
+
+    def text(cell):
+        return None if cell is None or cell.value is None else str(cell.value)
+
+    def struck(cell):
+        font = getattr(cell, "font", None)
+        return bool(font is not None and font.strike)
+
+    header_index = None
+    for index, row in enumerate(rows):
+        values = {text(cell).strip() for cell in row if text(cell)}
+        if "1st Choice" in values and "2nd Choice" in values:
+            header_index = index
+    if header_index is None:
+        return []
+
+    headers = [(text(cell) or "").strip() for cell in rows[header_index]]
+    try:
+        subject_col = headers.index("Subject")
+        section_col = headers.index("Section")
+    except ValueError:
+        return []
+
+    canceled = []
+    for row in rows[header_index + 1:]:
+        if len(row) <= max(subject_col, section_col):
+            continue
+        subject, section = row[subject_col], row[section_col]
+        if text(subject) is None or text(section) is None:
+            continue
+        if struck(subject) or struck(section):
+            canceled.append(f"{text(subject)} {text(section)}".strip())
+    return canceled
+
+
 def _clean_link_group(value):
     """Tidy a Link Group cell: None for blank, otherwise the text with
     surrounding/repeated spaces removed."""
@@ -313,6 +369,49 @@ def link_group_key(label):
     share a group: case-insensitive, with en/em dashes treated as plain
     hyphens (so "COMP 232 \u2013 A" and "comp 232 - a" are the same group)."""
     return label.replace("\u2013", "-").replace("\u2014", "-").casefold()
+
+
+def load_unstaffed_linked_classes(file_path, sheet_name="Choices Round 1"):
+    """
+    Classes that have a Link Group label but NO tutor names in any choice
+    column. These are left out of the matching (nobody can fill them), but
+    the results page lists them next to the class they are linked with so
+    the page matches the sheet.
+
+    Returns a list of {"class_id", "link_group"}.
+    """
+    raw = pd.read_excel(file_path, sheet_name=sheet_name, header=None)
+    header_row = _find_header_row(raw)
+
+    dataframe = pd.read_excel(file_path, sheet_name=sheet_name, header=header_row)
+    dataframe = dataframe.rename(columns={dataframe.columns[0]: "Tier"})
+    link_group_column = next(
+        (c for c in dataframe.columns if str(c).strip().lower() == "link group"), None
+    )
+    if link_group_column is None:
+        return []
+
+    dataframe = dataframe.dropna(subset=["Subject", "Section"])
+    if "Class Status" in dataframe.columns:
+        dataframe = dataframe[
+            dataframe["Class Status"].isna() | (dataframe["Class Status"] == "Active")
+        ]
+
+    canceled = set(find_canceled_class_ids(file_path, sheet_name))
+
+    unstaffed = []
+    for _, row in dataframe.iterrows():
+        label = _clean_link_group(row[link_group_column])
+        if not label:
+            continue
+        if f"{row['Subject']} {row['Section']}".strip() in canceled:
+            continue
+        has_names = any(_split_candidate_entries(row[column]) for column in PREFERENCE_COLUMNS)
+        if not has_names:
+            unstaffed.append(
+                {"class_id": f"{row['Subject']} {row['Section']}".strip(), "link_group": label}
+            )
+    return unstaffed
 
 
 def load_real_choices(file_path, sheet_name="Choices Round 1"):
@@ -368,9 +467,13 @@ def load_real_choices(file_path, sheet_name="Choices Round 1"):
 
     classes = []
     seen_class_ids = set()
+    canceled = set(find_canceled_class_ids(file_path, sheet_name))
 
     for _, row in dataframe.iterrows():
         class_id = f"{row['Subject']} {row['Section']}".strip()
+
+        if class_id in canceled:
+            continue  # struck through in Excel: the class was canceled
 
         if class_id in seen_class_ids:
             raise ValueError(
