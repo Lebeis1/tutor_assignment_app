@@ -9,7 +9,7 @@ from link_groups import (
     expand_results,
     solve_with_groups,
 )
-from real_algorithm import (
+from algorithm import (
     match_real_choices_bruteforce,
     match_real_choices_fast,
 )
@@ -182,7 +182,7 @@ def test_unstaffed_linked_classes():
 
     from openpyxl import Workbook
 
-    from real_excel_handler import link_group_key, load_real_choices, load_unstaffed_linked_classes
+    from excel_handler import link_group_key, load_real_choices, load_unstaffed_linked_classes
 
     wb = Workbook()
     ws = wb.active

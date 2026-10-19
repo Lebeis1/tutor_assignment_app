@@ -6,12 +6,12 @@ internals leak into the template.
 """
 
 from link_groups import describe_groups, expand_results, solve_with_groups
-from real_algorithm import (
+from algorithm import (
     SENIORITY_RANK,
     find_alternative_optimal_assignments,
     is_cat_placement,
 )
-from real_excel_handler import (
+from excel_handler import (
     find_canceled_class_ids,
     find_related_sections,
     link_group_key,

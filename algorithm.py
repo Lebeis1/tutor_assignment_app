@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from real_excel_handler import (
+from excel_handler import (
     TIER_FILL_PRIORITY,
     load_real_choices,
     load_tutor_info,
@@ -12,7 +12,7 @@ PREFERENCE_SCORES = {1: 3, 2: 2, 3: 1}
 
 # Default cap on how many classes a tutor can be assigned, used for any
 # tutor not given a specific value via tutor_capacity=. Pass a real
-# per-tutor dict once you have one (see real_excel_handler.
+# per-tutor dict once you have one (see excel_handler.
 # load_tutor_info) rather than relying on this blanket default.
 DEFAULT_TUTOR_CAPACITY = 2
 
@@ -486,7 +486,7 @@ def find_alternative_optimal_assignments(
     is a CONFIRMED equally-optimal assignment, not a guess.
 
     related_sections: optional, from
-    real_excel_handler.find_related_sections(file_path) - a dict of
+    excel_handler.find_related_sections(file_path) - a dict of
     class_id -> group_id for classes that are likely the same course
     offering (e.g. a lecture and its lab). When a group's classes are
     ALL contested, and one of the confirmed-optimal alternatives has
