@@ -42,6 +42,19 @@
   .drag-ghost { position:fixed; z-index:1000; pointer-events:none; left:0; top:0; padding:5px 14px; border-radius:999px; background:var(--accent); color:#fff;
            font-weight:600; box-shadow:0 8px 24px rgba(0,0,0,.28); transform:translate(-50%,-130%); white-space:nowrap; }
   .open-slot { color:var(--muted); font-style:italic; }
+  .tcell { display:flex; align-items:center; gap:8px; flex-wrap:nowrap; }
+  #t-class td:nth-child(2) { min-width:310px; }
+  .tcell.stack { flex-direction:column; align-items:flex-start; gap:6px; }
+  .ccell > div { height:31px; display:flex; align-items:center; gap:6px; white-space:nowrap; }
+  .ccell > div + div { margin-top:6px; }
+  .lockico { font-size:12px; }
+  .addzone { display:inline-flex; align-items:center; padding:3px 10px; border-radius:999px; border:1.5px dashed var(--muted); color:var(--muted);
+             font-size:12px; font-weight:550; visibility:hidden; white-space:nowrap; }
+  body.dragging .addzone, body.placing .addzone { visibility:visible; }
+  .addzone.hover { border-color:var(--accent); border-style:solid; background:var(--accent); color:#fff; }
+  body.placing .addzone { cursor:copy; }
+  body.dragging .pill.hover { outline:3px solid var(--accent); background:var(--accent-soft); }
+  body.dragging tr.crow.hover.in-zone { outline:0; background:inherit; }
   body.dragging { user-select:none; cursor:grabbing; }
   body.dragging tr.crow.valid td:first-child { box-shadow: inset 4px 0 0 var(--ok); }
   body.dragging tr.crow.valid { background:var(--ok-soft); }
@@ -120,13 +133,13 @@
 </div>
 
 <section class="panel active" id="p-class">
-  <p class="howto">Drag a tutor&rsquo;s name onto another class to move them, or drop it in the tray below to set it aside. Dropping on a class that already has a tutor replaces them, and the replaced tutor goes to the tray. You can also click a name in the tray, then click a class. Any move is allowed; risky ones show a warning.</p>
+  <p class="howto">Drag a tutor&rsquo;s name onto another class to move them, or drop it in the tray below to set it aside. Dropping on a class that already has a tutor <b>replaces</b> them (the replaced tutor goes to the tray). To give a class <b>two tutors</b>, drop the name on the dashed &ldquo;+ add a 2nd tutor&rdquo; spot that appears beside the current tutor while you drag. You can also click a name in the tray, then click a class (or its &ldquo;+ add a 2nd tutor&rdquo; spot). A &#128274; means the tutor is locked to that class in your sheet. Any move is allowed; risky ones show a warning.</p>
   <div class="filters">
     <input class="search" type="search" placeholder="Filter by class or tutor&hellip;" id="filter">
     <label class="only-open"><input type="checkbox" id="only-open"> Show only open classes <span class="muted" id="open-count"></span></label>
   </div>
   <div class="scroll"><table id="t-class">
-    <thead><tr><th>Class</th><th>Assigned tutor</th><th>Choice</th><th>Notes</th></tr></thead>
+    <thead><tr><th>Class</th><th>Assigned tutor(s)</th><th>Choice</th><th>Notes</th></tr></thead>
     <tbody id="class-body"></tbody>
   </table></div>
 </section>
@@ -169,18 +182,28 @@
   var ORD = { 1: "1st", 2: "2nd", 3: "3rd" };
 
   // ---- state -----------------------------------------------------------
-  var state = { assign: {}, tray: [] };   // assign: classId -> tutor name or null; tray: [{id,name,from}]
+  // assign: classId -> main tutor or null.  extra: classId -> second tutor or null.
+  // tray: [{id,name,from}].  A class never has a second tutor without a main one.
+  var state = { assign: {}, extra: {}, tray: [] };
   var nextChip = 1;
-  classes.forEach(function (c) { state.assign[c.id] = c.tutor || null; });
-  var original = JSON.parse(JSON.stringify(state.assign));
+  classes.forEach(function (c) { state.assign[c.id] = c.tutor || null; state.extra[c.id] = c.extra || null; });
+  var original = { assign: JSON.parse(JSON.stringify(state.assign)), extra: JSON.parse(JSON.stringify(state.extra)) };
   var history = [];
   var lastSaved = serialize();
   var selectedChip = null;
   var filterText = "";
   var onlyOpen = false;
 
-  function serialize() { return JSON.stringify([state.assign, state.tray.map(function (c) { return c.name; })]); }
+  function serialize() { return JSON.stringify([state.assign, state.extra, state.tray.map(function (c) { return c.name; })]); }
   function isDirty() { return serialize() !== lastSaved; }
+  function tutorsIn(id) { return [state.assign[id], state.extra[id]].filter(Boolean); }
+  function isIn(id, name) { return state.assign[id] === name || state.extra[id] === name; }
+  function normalize() {
+    classes.forEach(function (c) {
+      if (!state.assign[c.id] && state.extra[c.id]) { state.assign[c.id] = state.extra[c.id]; state.extra[c.id] = null; }
+    });
+  }
+  function slotMap(slot) { return slot === "extra" ? state.extra : state.assign; }
 
   // ---- tiny DOM helper (uses textContent, so names can never inject HTML) ----
   function h(tag, attrs) {
@@ -205,64 +228,73 @@
   function loads() {
     var sets = {};
     classes.forEach(function (c) {
-      var t = state.assign[c.id];
-      if (!t) return;
-      (sets[t] = sets[t] || {})[slotKey(c)] = c.id;
+      tutorsIn(c.id).forEach(function (t) { (sets[t] = sets[t] || {})[slotKey(c)] = c.id; });
     });
     return sets;
   }
   function maxFor(t) { return tutorInfo[t] ? tutorInfo[t].max : 2; }
-  function originallyTogether(c) {
-    var t = original[c.id];
-    return !!t && c.siblings.length > 0 && c.siblings.every(function (s) { return original[s] === t; });
+  function originallyTogether(c, t) {
+    return original.assign[c.id] === t && c.siblings.length > 0 && c.siblings.every(function (s) { return original.assign[s] === t; });
   }
   function warningsFor(c, L) {
-    var t = state.assign[c.id], w = [];
-    if (!t) return w;
-    if (!(t in c.cands)) w.push({ k: "bad", text: t + " did not list this class" });
-    else if (c.cat.indexOf(t) !== -1) w.push({ k: "warn", text: t + " marked this class (CAT)" });
-    var n = Object.keys(L[t] || {}).length;
-    if (n > maxFor(t)) w.push({ k: "bad", text: t + " has " + n + " classes (max " + maxFor(t) + ")" });
-    if (originallyTogether(c)) {
-      var apart = c.siblings.filter(function (s) { return state.assign[s] !== t; });
-      if (apart.length) w.push({ k: "warn", text: "Linked with " + apart.join(", ") + ", now a different tutor" });
-    }
+    var w = [];
+    tutorsIn(c.id).forEach(function (t) {
+      if (!(t in c.cands)) w.push({ k: "bad", text: t + " did not list this class" });
+      else if (c.cat.indexOf(t) !== -1) w.push({ k: "warn", text: t + " marked this class (CAT)" });
+      var n = Object.keys(L[t] || {}).length;
+      if (n > maxFor(t)) w.push({ k: "bad", text: t + " has " + n + " classes (max " + maxFor(t) + ")" });
+      if (originallyTogether(c, t)) {
+        var apart = c.siblings.filter(function (s) { return !isIn(s, t); });
+        if (apart.length) w.push({ k: "warn", text: "Linked with " + apart.join(", ") + ", now a different tutor" });
+      }
+    });
+    (c.locked || []).forEach(function (t) {
+      if (!isIn(c.id, t)) w.push({ k: "warn", text: t + " is locked to this class in your sheet" });
+    });
     return w;
   }
 
   // ---- changes (every change goes through here so undo works) -------------
   function commit(fn) {
-    history.push(JSON.stringify({ a: state.assign, t: state.tray, n: nextChip }));
+    history.push(JSON.stringify({ a: state.assign, x: state.extra, t: state.tray, n: nextChip }));
     if (history.length > 100) history.shift();
     fn();
+    normalize();
     selectedChip = null;
     render();
   }
   function undo() {
     if (!history.length) return;
     var s = JSON.parse(history.pop());
-    state.assign = s.a; state.tray = s.t; nextChip = s.n; selectedChip = null;
+    state.assign = s.a; state.extra = s.x; state.tray = s.t; nextChip = s.n; selectedChip = null;
     render(); toast("Undid last change");
   }
   function addChip(name, from) { state.tray.push({ id: nextChip++, name: name, from: from }); }
 
-  // Put `name` into class `classId`. source = {type:"class", id} | {type:"tray", chip} | {type:"new"}
-  function place(classId, name, source) {
+  // Put `name` into class `classId`.
+  //   source = {type:"class", id, slot} | {type:"tray", chip} | {type:"new"}
+  //   mode   = "replace" (default) or "add" (make it the class's second tutor)
+  //   slot   = which current tutor "replace" swaps out: "main" (default) or "extra"
+  function place(classId, name, source, mode, slot) {
     if (source.type === "class" && source.id === classId) return;
-    var prev = state.assign[classId];
+    if (isIn(classId, name)) { toast(name + " is already in " + classId); return; }
+    mode = mode || "replace";
+    if (mode === "add" && state.extra[classId]) { toast(classId + " already has two tutors"); return; }
+    var target = mode === "add" ? (state.assign[classId] ? "extra" : "main") : (slot || (state.extra[classId] ? "extra" : "main"));
+    var prev = slotMap(target)[classId];
     commit(function () {
-      if (source.type === "class") state.assign[source.id] = null;
+      if (source.type === "class") slotMap(source.slot)[source.id] = null;
       if (source.type === "tray") state.tray = state.tray.filter(function (c) { return c.id !== source.chip; });
-      state.assign[classId] = name;
+      slotMap(target)[classId] = name;
       if (prev && prev !== name) addChip(prev, "replaced in " + classId);
-      else if (prev === name && source.type !== "new") { /* same tutor already there */ }
     });
-    toast(prev && prev !== name ? name + " placed in " + classId + "; " + prev + " moved to the tray" : name + " placed in " + classId);
+    if (mode === "add" && target === "extra") toast(name + " added to " + classId + " as a 2nd tutor");
+    else toast(prev && prev !== name ? name + " placed in " + classId + "; " + prev + " moved to the tray" : name + " placed in " + classId);
   }
-  function toTray(classId) {
-    var name = state.assign[classId];
+  function toTray(classId, slot) {
+    var name = slotMap(slot)[classId];
     if (!name) return;
-    commit(function () { state.assign[classId] = null; addChip(name, "removed from " + classId); });
+    commit(function () { slotMap(slot)[classId] = null; addChip(name, "removed from " + classId); });
     toast(name + " moved to the tray");
   }
 
@@ -288,9 +320,9 @@
     var openNow = DATA.classes.filter(function (c) { return !state.assign[c.id]; }).length;
     document.getElementById("open-count").textContent = "(" + openNow + ")";
     DATA.classes.forEach(function (c) {
-      var t = state.assign[c.id];
-      if (onlyOpen && t) return;
-      if (q && c.id.toLowerCase().indexOf(q) === -1 && (t || "").toLowerCase().indexOf(q) === -1) return;
+      var ts = tutorsIn(c.id), t = ts[0];
+      if (onlyOpen && ts.length) return;
+      if (q && c.id.toLowerCase().indexOf(q) === -1 && !ts.some(function (n) { return n.toLowerCase().indexOf(q) !== -1; })) return;
       shown++;
       if (!q && c.tier !== lastTier) {
         lastTier = c.tier;
@@ -302,23 +334,31 @@
         c.unstaffed.length ? h("div", { class: "muted", style: "font-size:12px", text: "also linked: " + c.unstaffed.join(", ") + " (no tutor names, not placed)" }) : null);
 
       var tutorCell = h("td");
-      if (t) {
-        var p = pill(t, { "data-src": "class", "data-class": c.id });
-        p.appendChild(h("button", { class: "x", title: "Move to tray", type: "button", text: "×", "data-x": c.id }));
-        tutorCell.appendChild(p);
+      if (ts.length) {
+        var box = h("div", { class: "tcell" + (ts.length > 1 ? " stack" : "") });
+        [["main", state.assign[c.id]], ["extra", state.extra[c.id]]].forEach(function (pair) {
+          if (!pair[1]) return;
+          var p = pill(pair[1], { "data-src": "class", "data-class": c.id, "data-slot": pair[0] });
+          if ((c.locked || []).indexOf(pair[1]) !== -1) p.insertBefore(h("span", { class: "lockico", title: "Locked to this class in your sheet", text: "\uD83D\uDD12" }), p.firstChild);
+          p.appendChild(h("button", { class: "x", title: "Move to tray", type: "button", text: "×", "data-x": c.id, "data-slot": pair[0] }));
+          box.appendChild(p);
+        });
+        if (ts.length === 1) box.appendChild(h("span", { class: "addzone", "data-add": c.id, text: "+ add a 2nd tutor", title: "Drop a name here to add a second tutor instead of replacing" }));
+        tutorCell.appendChild(box);
       } else {
         tutorCell.appendChild(h("span", { class: "badge bad", text: "Open" }));
       }
 
-      var choiceCell = h("td");
-      if (t) {
-        var ch = c.cands[t];
-        choiceCell.appendChild(h("span", { class: "badge" + (ch === 1 ? " ok" : ""), text: ch ? ORD[ch] : "not listed" }));
-      }
+      var choiceCell = h("td", { class: "ccell" });
+      ts.forEach(function (n) {
+        var ch = c.cands[n];
+        var badge = h("span", { class: "badge" + (ch === 1 ? " ok" : ""), text: ch ? ORD[ch] : "not listed" });
+        choiceCell.appendChild(ts.length > 1 ? h("div", null, badge, h("span", { class: "muted", text: n.split(" ")[0] })) : h("div", null, badge));
+      });
 
       var notes = h("td");
       w.forEach(function (x) { notes.appendChild(h("div", { class: "warn-line " + (x.k === "bad" ? "bad" : ""), text: "⚠ " + x.text })); });
-      var alts = c.alts.filter(function (a) { return a.tutor !== t; });
+      var alts = c.alts.filter(function (a) { return !isIn(c.id, a.tutor); });
       if (alts.length) {
         var d = h("details", { class: "alts" }, h("summary", { text: alts.length + " other equally good option" + (alts.length > 1 ? "s" : "") }));
         alts.forEach(function (a) {
@@ -343,7 +383,7 @@
     var names = DATA.tutors.map(function (t) { return t.name; });
     var placed = names.filter(function (n) { return L[n]; }), idle = names.filter(function (n) { return !L[n]; });
     function card(n) {
-      var ids = classes.filter(function (c) { return state.assign[c.id] === n; });
+      var ids = classes.filter(function (c) { return isIn(c.id, n); });
       var load = Object.keys(L[n] || {}).length, mx = maxFor(n);
       var ul = h("ul");
       ids.forEach(function (c) {
@@ -409,13 +449,16 @@
 
   function renderStats(L) {
     var filled = classes.filter(function (c) { return state.assign[c.id]; });
-    var warnCount = 0, cat = 0, choices = { 1: 0, 2: 0, 3: 0 }, unlisted = 0;
+    var warnCount = 0, cat = 0, choices = { 1: 0, 2: 0, 3: 0 }, unlisted = 0, pairs = 0;
     classes.forEach(function (c) {
-      var t = state.assign[c.id];
-      if (!t) return;
-      var w = warningsFor(c, L); warnCount += w.length;
-      if (c.cat.indexOf(t) !== -1) cat++;
-      if (c.cands[t]) choices[c.cands[t]]++; else unlisted++;
+      var ts = tutorsIn(c.id);
+      if (!ts.length) return;
+      if (ts.length > 1) pairs++;
+      warnCount += warningsFor(c, L).length;
+      ts.forEach(function (t) {
+        if (c.cat.indexOf(t) !== -1) cat++;
+        if (c.cands[t]) choices[c.cands[t]]++; else unlisted++;
+      });
     });
     document.getElementById("s-filled").textContent = filled.length;
     document.getElementById("s-total").textContent = classes.length;
@@ -425,7 +468,8 @@
     document.getElementById("s-open").textContent = classes.length - filled.length;
     document.getElementById("choice-note").textContent =
       "Tutors have their 1st choice in " + choices[1] + " placements, 2nd in " + choices[2] + ", 3rd in " + choices[3] +
-      (unlisted ? ", and " + unlisted + " placement" + (unlisted > 1 ? "s were" : " was") + " not on the tutor’s list" : "") + ".";
+      (unlisted ? ", and " + unlisted + " placement" + (unlisted > 1 ? "s were" : " was") + " not on the tutor’s list" : "") + "." +
+      (pairs ? " " + pairs + " class" + (pairs > 1 ? "es have" : " has") + " two tutors." : "");
     var tb = document.getElementById("tier-badges");
     tb.textContent = "";
     DATA.tier_order.forEach(function (tier) {
@@ -449,11 +493,11 @@
   var tray = document.getElementById("tray");
 
   function sourceOf(el) {
-    if (el.getAttribute("data-src") === "class") return { type: "class", id: el.getAttribute("data-class") };
+    if (el.getAttribute("data-src") === "class") return { type: "class", id: el.getAttribute("data-class"), slot: el.getAttribute("data-slot") || "main" };
     return { type: "tray", chip: parseInt(el.getAttribute("data-chip"), 10) };
   }
   function nameOf(src) {
-    if (src.type === "class") return state.assign[src.id];
+    if (src.type === "class") return slotMap(src.slot)[src.id];
     var c = state.tray.filter(function (x) { return x.id === src.chip; })[0];
     return c && c.name;
   }
@@ -499,18 +543,32 @@
     drag.ghost.style.top = drag.y + "px";
     updateHover();
   }
+  // What is under the pointer? A class can be hit three ways:
+  //   the "+ add a 2nd tutor" spot  -> mode "add"
+  //   a current tutor's name         -> mode "replace" that tutor (only needed when there are two)
+  //   anywhere else on the row       -> "replace" the only tutor, or fill an open class
   function targetAt(x, y) {
     var el = document.elementFromPoint(x, y);
     if (!el) return null;
     if (el.closest("#tray")) return { type: "tray" };
     var row = el.closest("tr.crow");
-    return row ? { type: "class", id: row.getAttribute("data-class"), row: row } : null;
+    if (!row) return null;
+    var id = row.getAttribute("data-class");
+    var zone = el.closest(".addzone");
+    if (zone) return { type: "class", id: id, row: row, mode: "add", zone: zone };
+    var pl = el.closest(".pill");
+    var two = !!(state.assign[id] && state.extra[id]);
+    if (pl && pl.getAttribute("data-src") === "class") return { type: "class", id: id, row: row, mode: "replace", slot: pl.getAttribute("data-slot"), pill: pl };
+    return { type: "class", id: id, row: row, mode: "replace", slot: two ? null : "main" };
   }
   function updateHover() {
-    document.querySelectorAll(".hover").forEach(function (n) { n.classList.remove("hover"); });
+    document.querySelectorAll(".hover").forEach(function (n) { n.classList.remove("hover", "in-zone"); });
     var t = targetAt(drag.x, drag.y);
     if (!t) return;
-    (t.type === "tray" ? tray : t.row).classList.add("hover");
+    if (t.type === "tray") { tray.classList.add("hover"); return; }
+    if (t.mode === "add") { t.zone.classList.add("hover"); t.row.classList.add("hover", "in-zone"); return; }
+    if (t.pill && state.extra[t.id]) { t.pill.classList.add("hover"); t.row.classList.add("hover", "in-zone"); return; }
+    t.row.classList.add("hover");
   }
   // Scroll the page by itself when the cursor nears the top or bottom edge.
   function autoScroll() {
@@ -524,22 +582,25 @@
   function endDrag(drop) {
     if (!drag) return;
     var d = drag; drag = null;
+    // Find the drop target BEFORE the drag styling is switched off: the
+    // "+ add a 2nd tutor" spot is only visible while dragging.
+    var t = d.active && drop ? targetAt(d.x, d.y) : null;
     cancelAnimationFrame(d.raf);
     if (d.ghost) d.ghost.remove();
     d.el.classList.remove("dragging-src");
     document.body.classList.remove("dragging");
-    document.querySelectorAll("tr.crow").forEach(function (r) { r.classList.remove("valid", "dim", "hover"); });
+    document.querySelectorAll("tr.crow").forEach(function (r) { r.classList.remove("valid", "dim", "hover", "in-zone"); });
+    document.querySelectorAll(".addzone.hover, .pill.hover").forEach(function (n) { n.classList.remove("hover"); });
     tray.classList.remove("hover");
     if (!d.active) {
       // a plain click on a tray name selects it for click-to-place
       if (d.src.type === "tray") { selectedChip = selectedChip === d.src.chip ? null : d.src.chip; render(); }
       return;
     }
-    if (!drop) return;
-    var t = targetAt(d.x, d.y);
-    if (!t) return;
-    if (t.type === "tray") { if (d.src.type === "class") toTray(d.src.id); }
-    else place(t.id, d.name, d.src);
+    if (!drop || !t) return;
+    if (t.type === "tray") { if (d.src.type === "class") toTray(d.src.id, d.src.slot); return; }
+    if (t.mode === "replace" && !t.slot) { toast(t.id + " has two tutors. Drop the name onto the tutor you want to replace."); return; }
+    place(t.id, d.name, d.src, t.mode, t.slot);
   }
   document.addEventListener("pointerup", function () { endDrag(true); });
   document.addEventListener("pointercancel", function () { endDrag(false); });
@@ -553,16 +614,19 @@
   // ---- clicks ------------------------------------------------------------
   document.addEventListener("click", function (e) {
     var x = e.target.closest("[data-x]");
-    if (x) { toTray(x.getAttribute("data-x")); return; }
+    if (x) { toTray(x.getAttribute("data-x"), x.getAttribute("data-slot") || "main"); return; }
     var use = e.target.closest("[data-use]");
-    if (use) { place(use.getAttribute("data-use"), use.getAttribute("data-tutor"), { type: "new" }); return; }
-    if (selectedChip !== null) {
-      var row = e.target.closest("tr.crow");
-      if (row && !e.target.closest(".pill, details, button")) {
-        var chip = state.tray.filter(function (c) { return c.id === selectedChip; })[0];
-        if (chip) place(row.getAttribute("data-class"), chip.name, { type: "tray", chip: chip.id });
-      }
-    }
+    if (use) { place(use.getAttribute("data-use"), use.getAttribute("data-tutor"), { type: "new" }, "replace", "main"); return; }
+    if (selectedChip === null) return;
+    var chip = state.tray.filter(function (c) { return c.id === selectedChip; })[0];
+    var row = e.target.closest("tr.crow");
+    if (!chip || !row || e.target.closest("details, button")) return;
+    var id = row.getAttribute("data-class"), src = { type: "tray", chip: chip.id };
+    if (e.target.closest(".addzone")) { place(id, chip.name, src, "add"); return; }
+    var pl = e.target.closest(".pill");
+    if (pl) { place(id, chip.name, src, "replace", pl.getAttribute("data-slot") || "main"); return; }
+    if (state.assign[id] && state.extra[id]) { toast(id + " has two tutors. Click the name you want to replace."); return; }
+    place(id, chip.name, src, "replace", "main");
   });
 
   document.getElementById("add-tutor").addEventListener("change", function (e) {
@@ -575,7 +639,11 @@
   document.getElementById("reset").addEventListener("click", function () {
     if (!isDirty() && !history.length) return;
     if (!confirm("Discard all your changes and go back to the algorithm's draft?")) return;
-    commit(function () { state.assign = JSON.parse(JSON.stringify(original)); state.tray = []; });
+    commit(function () {
+      state.assign = JSON.parse(JSON.stringify(original.assign));
+      state.extra = JSON.parse(JSON.stringify(original.extra));
+      state.tray = [];
+    });
     toast("Reset to the draft");
   });
   document.getElementById("filter").addEventListener("input", function (e) { filterText = e.target.value; renderClasses(loads()); });
@@ -595,16 +663,18 @@
     var body = {
       source: FILENAME,
       assignments: classes.map(function (c) {
-        var t = state.assign[c.id];
-        return { "class": c.id, tier: c.tier, tutor: t, choice: t ? (c.cands[t] || null) : null,
-                 cat: !!t && c.cat.indexOf(t) !== -1, group: c.group || "",
-                 changed: (state.assign[c.id] || null) !== (original[c.id] || null),
+        var t = state.assign[c.id], t2 = state.extra[c.id];
+        return { "class": c.id, subject: c.subject, section: c.section, tier: c.tier,
+                 tutor: t, choice: t ? (c.cands[t] || null) : null, cat: !!t && c.cat.indexOf(t) !== -1,
+                 tutor2: t2, choice2: t2 ? (c.cands[t2] || null) : null, cat2: !!t2 && c.cat.indexOf(t2) !== -1,
+                 locked: c.locked || [], group: c.group || "",
+                 changed: (t || null) !== (original.assign[c.id] || null) || (t2 || null) !== (original.extra[c.id] || null),
                  notes: warningsFor(c, L).map(function (x) { return x.text; })
                           .concat(c.unstaffed.length ? ["Also linked, no tutor names so not placed: " + c.unstaffed.join(", ")] : []) };
       }),
       tutors: DATA.tutors.map(function (t) {
         return { name: t.name, load: Object.keys(L[t.name] || {}).length, max: t.max,
-                 classes: classes.filter(function (c) { return state.assign[c.id] === t.name; }).map(function (c) { return c.id; }) };
+                 classes: classes.filter(function (c) { return isIn(c.id, t.name); }).map(function (c) { return c.id; }) };
       }),
       tray: state.tray.map(function (c) { return c.name; }),
       canceled: DATA.canceled || []

@@ -7,6 +7,7 @@ internals leak into the template.
 
 from link_groups import describe_groups, expand_results, solve_with_groups
 from algorithm import (
+    DEFAULT_TUTOR_CAPACITY,
     SENIORITY_RANK,
     find_alternative_optimal_assignments,
     is_cat_placement,
@@ -28,6 +29,93 @@ def _tier_sort_key(tier):
     return TIER_ORDER.index(tier) if tier in TIER_ORDER else len(TIER_ORDER)
 
 
+def _apply_locks(classes, capacities):
+    """
+    Work out the "(locked)" placements.
+
+    Returns (rows, notices, solver_capacity, locked_tutors, group_keys):
+      rows           - one result row per locked class, in the same shape
+                       expand_results() produces (plus a second tutor and
+                       the locked names).
+      notices        - plain-language things worth a look.
+      solver_capacity- Max Classes per tutor with locked classes already
+                       subtracted, for the rest of the matching.
+      locked_tutors  - everyone holding a locked class.
+      group_keys     - Link Group keys that contain a locked section.
+    """
+    rows, notices = [], []
+    held = {}  # tutor -> set of "class units" they are locked into
+    group_keys = set()
+    group_notes = {}
+
+    for record in classes:
+        names = record.get("locked_candidates") or set()
+        if not names:
+            continue
+        choice = dict(record["candidates"])
+        ordered = sorted(names, key=lambda n: (choice[n], n.lower()))
+        kept, dropped = ordered[:2], ordered[2:]
+        label = record.get("link_group")
+        key = link_group_key(label) if label else None
+        if key:
+            group_keys.add(key)
+            group_notes.setdefault(key, (label, []))[1].append((record["class_id"], kept[0]))
+        for n in kept:
+            held.setdefault(n, set()).add(key or record["class_id"])
+        if len(ordered) > 1:
+            notices.append(
+                f"{record['class_id']}: {' and '.join(kept)} are both locked to this class, so "
+                "both are placed there"
+                + (f" ({', '.join(dropped)} could not be shown: a class holds two tutors)" if dropped else "")
+                + "."
+            )
+        second = kept[1] if len(kept) > 1 else None
+        rows.append(
+            {
+                "Class": record["class_id"],
+                "Tier": record["tier_label"],
+                "Assigned Tutor": kept[0],
+                "Their Choice": choice[kept[0]],
+                "CAT": is_cat_placement(record, kept[0]),
+                "Second Tutor": second,
+                "Second Choice": choice[second] if second else None,
+                "Second CAT": bool(second and is_cat_placement(record, second)),
+                "Locked": kept,
+                "Unit": record["class_id"],
+                "Link Group": label,
+                "Kept Together": False,
+            }
+        )
+
+    for key, (label, items) in group_notes.items():
+        locked_ids = {cid for cid, _ in items}
+        others = [
+            c["class_id"] for c in classes
+            if c.get("link_group") and link_group_key(c["link_group"]) == key
+            and c["class_id"] not in locked_ids
+        ]
+        if not others:
+            continue  # every staffed section of the group is locked: nothing to explain
+        placed = ", ".join(f"{cid} (locked to {t})" for cid, t in items)
+        notices.append(
+            f"Link Group \u201c{label}\u201d has a locked section: {placed}. Its locked sections are "
+            "placed as the sheet says and the rest are matched on their own, so a tutor who also "
+            "takes another section of that group uses one more of their Max Classes."
+        )
+
+    solver_capacity = dict(capacities)
+    for name, units in held.items():
+        limit = capacities.get(name, DEFAULT_TUTOR_CAPACITY)
+        if len(units) > limit:
+            notices.append(
+                f"{name} is locked to {len(units)} classes but their Max Classes is {limit}. "
+                "All locks are kept, so they show as over their maximum."
+            )
+        solver_capacity[name] = max(0, limit - len(units))
+
+    return rows, notices, solver_capacity, set(held), group_keys
+
+
 def run_placement(file_path):
     canceled = find_canceled_class_ids(file_path)
     classes = load_real_choices(file_path)
@@ -43,9 +131,26 @@ def run_placement(file_path):
     unstaffed_by_key = {}
     for item in load_unstaffed_linked_classes(file_path):
         unstaffed_by_key.setdefault(link_group_key(item["link_group"]), []).append(item["class_id"])
-    group_info, notices = describe_groups(classes, set(unstaffed_by_key))
-    solved = solve_with_groups(classes, seniority_rank, capacities, group_info)
-    section_rows = expand_results(solved["results"], solved["members_by_unit"])
+
+    # "(locked)": those tutors are fixed to those classes. The locked
+    # classes are taken out of the matching, each locked tutor's Max
+    # Classes shrinks by what they are already holding, and they no
+    # longer count as "a tutor still needing a first class".
+    locked_rows, lock_notices, solver_capacity, locked_tutors, locked_group_keys = _apply_locks(
+        classes, capacities
+    )
+    locked_ids = {r["Class"] for r in locked_rows}
+    free_classes = [c for c in classes if c["class_id"] not in locked_ids]
+
+    group_info, notices = describe_groups(
+        free_classes, set(unstaffed_by_key) | locked_group_keys
+    )
+    notices = lock_notices + notices
+    solved = solve_with_groups(
+        free_classes, seniority_rank, solver_capacity, group_info,
+        already_employed=frozenset(locked_tutors),
+    )
+    section_rows = expand_results(solved["results"], solved["members_by_unit"]) + locked_rows
 
     # With an explicit Link Group column, that is the source of truth;
     # the older "looks related" guess is only used when the column is
@@ -60,8 +165,9 @@ def run_placement(file_path):
     alternatives = find_alternative_optimal_assignments(
         solved["units"],
         seniority_rank=seniority_rank,
-        tutor_capacity=capacities,
+        tutor_capacity=solver_capacity,
         related_sections=related,
+        already_employed=frozenset(locked_tutors),
     )
     alt_by_unit = {a["Class"]: a for a in alternatives}
     class_by_id = {c["class_id"]: c for c in classes}
@@ -91,14 +197,20 @@ def run_placement(file_path):
                     "recommended": o["recommended"],
                 }
             )
-        unit_members = solved["members_by_unit"][sr["Unit"]]
+        unit_members = solved["members_by_unit"].get(sr["Unit"], [record])
         rows.append(
             {
                 "class": sr["Class"],
+                "subject": record["subject"],
+                "section": record["section"],
                 "tier": sr["Tier"],
                 "tutor": sr["Assigned Tutor"],
                 "choice": sr["Their Choice"],
                 "cat": bool(sr["CAT"]),
+                "tutor2": sr.get("Second Tutor"),
+                "choice2": sr.get("Second Choice"),
+                "cat2": bool(sr.get("Second CAT")),
+                "locked": sr.get("Locked", []),
                 "alternatives": options,
                 "num_candidates": len(record["candidates"]),
                 "candidates": [n for n, _ in record["candidates"]],
@@ -116,6 +228,8 @@ def run_placement(file_path):
     by_tutor = {}
     for r in filled:
         by_tutor.setdefault(r["tutor"], []).append(r)
+        if r["tutor2"]:
+            by_tutor.setdefault(r["tutor2"], []).append(r)
     tutors = [
         {
             "name": name,
@@ -139,8 +253,9 @@ def run_placement(file_path):
 
     choice_counts = {1: 0, 2: 0, 3: 0}
     for r in filled:
-        if r["choice"] in choice_counts:
-            choice_counts[r["choice"]] += 1
+        for ch in (r["choice"], r["choice2"]):
+            if ch in choice_counts:
+                choice_counts[ch] += 1
 
     # Everything the in-browser editor needs, so the page can recompute
     # warnings and counts live as the user moves names around.
@@ -159,6 +274,10 @@ def run_placement(file_path):
                 "id": r["class"],
                 "tier": r["tier"],
                 "tutor": r["tutor"],
+                "extra": r["tutor2"],
+                "locked": r["locked"],
+                "subject": r["subject"],
+                "section": r["section"],
                 "group": record.get("link_group") if (siblings or unstaffed) else None,
                 "siblings": siblings,
                 "unstaffed": unstaffed,
@@ -184,7 +303,8 @@ def run_placement(file_path):
             "total": len(rows),
             "filled": len(filled),
             "unfilled": len(unfilled),
-            "cat": sum(1 for r in filled if r["cat"]),
+            "cat": sum(1 for r in filled if r["cat"]) + sum(1 for r in filled if r["cat2"]),
+            "locked": sum(len(r["locked"]) for r in rows),
             "contested": sum(1 for r in filled if r["alternatives"]),
             "tutors_placed": len(tutors),
         },

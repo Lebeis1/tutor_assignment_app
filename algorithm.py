@@ -41,7 +41,8 @@ def is_cat_placement(class_record, tutor_name):
 
 
 def match_real_choices_bruteforce(
-    classes, seniority_rank=None, tutor_capacity=None, show_trace=False
+    classes, seniority_rank=None, tutor_capacity=None, show_trace=False,
+    already_employed=frozenset(),
 ):
     """
     Choose which classes get filled and by whom, out of a list of
@@ -69,6 +70,11 @@ def match_real_choices_bruteforce(
            tutor).
         8. Among ties on all of the above, prefer giving good outcomes
            to more senior tutors (only if seniority_rank is supplied).
+
+    already_employed: tutors who already hold a class outside this
+    problem (a "(locked)" placement). They get no employment credit for
+    being used again, so the "employ every tutor" rule goes to tutors who
+    still have nothing.
 
     A tutor can fill up to tutor_capacity[name] classes if given, or
     DEFAULT_TUTOR_CAPACITY otherwise. A class is only ever filled by one
@@ -117,7 +123,7 @@ def match_real_choices_bruteforce(
     best = {"key": None, "assignment": None}
 
     def make_key(filled_by_priority, tutor_load, non_cat_count, total_score, total_seniority):
-        employed_count = len(tutor_load)
+        employed_count = sum(1 for t in tutor_load if t not in already_employed)
         return (
             tuple(filled_by_priority[p] for p in priorities)
             + (employed_count, non_cat_count, total_score, total_seniority)
@@ -130,7 +136,7 @@ def match_real_choices_bruteforce(
         }
         remaining_classes = len(ordered_classes) - index
         # Best case: every remaining class employs a brand-new tutor.
-        optimistic_employed = len(tutor_load) + remaining_classes
+        optimistic_employed = sum(1 for t in tutor_load if t not in already_employed) + remaining_classes
         # Best case: every remaining class is filled without a CAT placement.
         optimistic_non_cat = non_cat_count + remaining_size_from[index]
         optimistic_score = total_score + PREFERENCE_SCORES[1] * remaining_size_from[index]
@@ -247,7 +253,10 @@ def match_real_choices_bruteforce(
     return results, best["key"]
 
 
-def match_real_choices_fast(classes, seniority_rank=None, tutor_capacity=None, tie_break_seed=None):
+def match_real_choices_fast(
+    classes, seniority_rank=None, tutor_capacity=None, tie_break_seed=None,
+    already_employed=frozenset(),
+):
     """
     Same priority rules and output as match_real_choices_bruteforce,
     but solved EXACTLY via weighted bipartite matching
@@ -274,6 +283,10 @@ def match_real_choices_fast(classes, seniority_rank=None, tutor_capacity=None, t
     work so a new tutor gets used" worth more than "give someone their
     2nd class", without making it worth more than filling a
     higher-priority tier.
+
+    already_employed: tutors who already hold a class outside this
+    problem (a "(locked)" placement). Their first slot here gets no
+    employment bonus, matching the brute-force version.
 
     tie_break_seed: optional. When two or more fully optimal
     assignments exist (the SAME tier fills, employed count, preference
@@ -384,7 +397,9 @@ def match_real_choices_fast(classes, seniority_rank=None, tutor_capacity=None, t
             choice_tier = candidate_tiers[tutor_name]
             preference_points = PREFERENCE_SCORES[choice_tier]
             rank = seniority_rank.get(tutor_name, 0)
-            employment_bonus = employment_weight if slot_number == 0 else 0
+            employment_bonus = (
+                employment_weight if slot_number == 0 and tutor_name not in already_employed else 0
+            )
             non_cat_bonus = 0 if is_cat_placement(class_record, tutor_name) else cat_weight
 
             value = (
@@ -458,7 +473,9 @@ def match_real_choices_fast(classes, seniority_rank=None, tutor_capacity=None, t
             )
 
     results.sort(key=lambda r: r["Class"])
-    employed_count = len({r["Assigned Tutor"] for r in results if r["Assigned Tutor"]})
+    employed_count = len(
+        {r["Assigned Tutor"] for r in results if r["Assigned Tutor"]} - set(already_employed)
+    )
     key = (
         tuple(filled_by_priority[p] for p in priorities)
         + (employed_count, non_cat_count, total_score, total_seniority)
@@ -468,7 +485,8 @@ def match_real_choices_fast(classes, seniority_rank=None, tutor_capacity=None, t
 
 
 def find_alternative_optimal_assignments(
-    classes, seniority_rank=None, tutor_capacity=None, num_attempts=40, related_sections=None
+    classes, seniority_rank=None, tutor_capacity=None, num_attempts=40, related_sections=None,
+    already_employed=frozenset(),
 ):
     """
     Find every genuinely-tied-for-best tutor for each class, so a human
@@ -524,7 +542,9 @@ def find_alternative_optimal_assignments(
     if related_sections is None:
         related_sections = {}
 
-    baseline_results, baseline_key = match_real_choices_fast(classes, seniority_rank, tutor_capacity)
+    baseline_results, baseline_key = match_real_choices_fast(
+        classes, seniority_rank, tutor_capacity, already_employed=already_employed
+    )
 
     options_by_class = {
         r["Class"]: {(r["Assigned Tutor"], r["Their Choice"])}
@@ -543,7 +563,8 @@ def find_alternative_optimal_assignments(
 
     for seed in range(num_attempts):
         attempt_results, attempt_key = match_real_choices_fast(
-            classes, seniority_rank, tutor_capacity, tie_break_seed=seed
+            classes, seniority_rank, tutor_capacity, tie_break_seed=seed,
+            already_employed=already_employed,
         )
 
         if attempt_key != baseline_key:

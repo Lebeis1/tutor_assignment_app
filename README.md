@@ -2,7 +2,7 @@
 
 A web app for the Learning Resource Center (LRC). Staff upload the placement
 workbook, where tutors list their top three class choices, and the app produces
-a draft assignment of tutors to classes. The draft is a starting point to
+a **draft** assignment of tutors to classes. The draft is a starting point to
 review and adjust, not a final answer: staff can drag and drop tutors to change
 it, then download the result as an Excel file.
 
@@ -81,6 +81,14 @@ files only.
   class.
 - Dropping on a class that already has a tutor replaces them, and the replaced
   tutor goes to the tray.
+- **Two tutors on one class:** while you drag, a dashed "+ add a 2nd tutor" spot
+  appears next to the current tutor on classes that have one. Drop the name on
+  that spot to add a second tutor instead of replacing. With a name selected from
+  the tray, click that spot instead. On a class that already has two tutors,
+  drop onto the name you want to replace. If you remove the first tutor, the
+  second one becomes the main tutor.
+- A lock icon (🔒) next to a name means the sheet locked that tutor to that
+  class. Moving a locked tutor away shows a warning, but is allowed.
 - Any move is allowed. Risky moves (for example the tutor didn't list that
   class, or it goes over their Max Classes) show a warning instead of being
   blocked.
@@ -89,7 +97,8 @@ files only.
 - Undo and Reset buttons are available, and the page warns before you leave with
   unsaved changes.
 - **Export to Excel** downloads exactly what is on screen, including your edits.
-  The file has an Assignments sheet, a By Tutor sheet and a Summary sheet (with
+  The Assignments sheet has the course (for example `MATH 300`) and its section
+  (for example `2`) in separate columns, plus columns for a second tutor. The file also has a By Tutor sheet and a Summary sheet (with
   tray names and skipped canceled classes).
 
 ## Excel Input Format
@@ -104,7 +113,7 @@ header row by looking for the last row that contains both "1st Choice" and
 |---|---|
 | First column | Tier of the class (see below) |
 | `1st Choice`, `2nd Choice`, `3rd Choice` | Tutor names. Several names may share one cell, separated by commas |
-| `Subject`, `Section` | Together identify the class, e.g. `PSY 300` + `E3L` |
+| `Subject`, `Section` | Together identify the class, e.g. `PSY 300` + `E3L`. The export keeps them in separate columns |
 | `Link Group` (optional) | Label that ties a lecture and its lab(s) together |
 
 Other columns (day, time, instructor, and so on) are ignored.
@@ -129,10 +138,31 @@ Tier 1, Tier 1 EU, Tier 2, Tier 3, then CAT Only.
 - Writing exactly `(CAT)` next to a name (any capitalization) marks that tutor as
   Canvas-Attached only for that class. The app avoids placing them in a class
   that isn't in the CAT Only tier when another tutor can take it.
-- Any other note in parentheses, such as `(locked)` or `(CAT like last sem!)`, is
-  ignored: it does not change the draft and is not shown on the results page.
+- Writing exactly `(locked)` next to a name (any capitalization) fixes that tutor
+  to that class, whoever else listed it. See "Locked tutors" below.
+- Any other note in parentheses, such as `(possibly locked)` or `(CAT like last
+  sem!)`, is ignored: it does not change the draft and is not shown on the
+  results page.
 - Write names without extra text outside the parentheses. A name like `Ann Lee
   CAT` is read as a different tutor.
+
+### Locked tutors
+
+A tutor marked `(locked)` is placed in that class exactly as the sheet says, even
+if another tutor ranked it higher.
+
+- The locked class is taken out of the matching. It counts as one of the tutor's
+  Max Classes, and a locked tutor no longer counts as someone still waiting for a
+  first class.
+- If two tutors are locked to the same class, both are placed there (a class
+  holds two tutors). A notice explains this.
+- If a tutor is locked to more classes than their Max Classes, all locks are kept
+  and a notice says so.
+- Link Groups: a locked section stays with its tutor and the remaining sections
+  of that group are matched on their own, so a tutor who also takes another
+  section of the group uses one more of their Max Classes.
+- On the results page a locked tutor shows a lock icon, and moving them away
+  shows a warning.
 
 ### Canceled classes
 
@@ -159,6 +189,7 @@ example `PSY 300 - A` on a lecture and its lab(s).
 The app finds the best assignment under these rules, in this order of
 importance:
 
+0. Locked tutors (`(locked)`) are placed first, as the sheet says.
 1. Only tutors' listed choices are used. Classes with no tutor names stay open.
 2. Higher tiers are filled first, and a higher tier always wins over a lower one.
 3. As many tutors as possible get at least one class.
@@ -200,6 +231,7 @@ Run from the project folder:
 python test_link_groups.py
 python test_export.py
 python test_canceled.py
+python test_locked.py
 ```
 
 - `test_link_groups.py` checks the fast solver against a slow brute-force search
@@ -209,6 +241,9 @@ python test_canceled.py
 - `test_export.py` checks the Excel export and that malformed export requests
   are rejected.
 - `test_canceled.py` checks that struck-through classes are skipped everywhere.
+- `test_locked.py` checks `(locked)` handling: a lock beats other votes, uses up
+  Max Classes, two locks share a class, and the solver still matches the
+  brute-force search when some tutors already hold a locked class.
 
 Each check prints a `PASS` line. An `AssertionError` points to the behavior that
 broke. The brute-force search is used only in these tests. The app never runs it.
@@ -249,5 +284,6 @@ should see it.
 ├── test_link_groups.py    # Solver vs brute force, Link Group tests
 ├── test_export.py         # Export tests
 ├── test_canceled.py       # Canceled-class tests
+├── test_locked.py         # Locked-tutor tests
 └── uploads/               # Temporary storage for uploads (cleaned automatically)
 ```
