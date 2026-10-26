@@ -6,7 +6,7 @@ import tempfile
 from openpyxl import Workbook
 from openpyxl.styles import Font
 
-from real_excel_handler import (
+from excel_handler import (
     find_canceled_class_ids,
     find_related_sections,
     load_real_choices,

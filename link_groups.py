@@ -157,7 +157,10 @@ def build_unit_classes(classes, split_keys=frozenset(), group_info=None):
     return units, members_by_unit
 
 
-def solve_with_groups(classes, seniority_rank=None, tutor_capacity=None, group_info=None):
+def solve_with_groups(
+    classes, seniority_rank=None, tutor_capacity=None, group_info=None,
+    already_employed=frozenset(),
+):
     """
     Solve with Link Groups. Starts with every mergeable family kept
     together, then tries splitting each family whose split could help
@@ -178,7 +181,9 @@ def solve_with_groups(classes, seniority_rank=None, tutor_capacity=None, group_i
 
     def solve(split_keys):
         units, members = build_unit_classes(classes, split_keys, group_info)
-        results, key = match_real_choices_fast(units, seniority_rank, tutor_capacity)
+        results, key = match_real_choices_fast(
+            units, seniority_rank, tutor_capacity, already_employed=already_employed
+        )
         return units, members, results, key
 
     split_keys = set()

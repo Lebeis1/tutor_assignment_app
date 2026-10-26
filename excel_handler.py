@@ -50,6 +50,16 @@ def _find_header_row(raw):
 def _split_candidate_entries(cell):
     """
     Split a "1st Choice"-style cell into (tutor_name, is_cat) pairs.
+    (See _split_candidate_notes for the version that also reports
+    "(locked)".)
+    """
+    return [(name, is_cat) for name, is_cat, _locked in _split_candidate_notes(cell)]
+
+
+def _split_candidate_notes(cell):
+    """
+    Split a "1st Choice"-style cell into (tutor_name, is_cat, is_locked)
+    triples.
 
     Splits on commas OUTSIDE parentheses only, so a note like
     "Lilo (Thurs lectures only), Suzanne" splits into two names, not
@@ -60,6 +70,10 @@ def _split_candidate_entries(cell):
     to that class. Only that exact standard is recognised: variants
     such as "(CAT only)" or "(maybe CAT)" are NOT treated as CAT, so
     tutors need to be told to write exactly "(CAT)".
+
+    is_locked is True when one of the notes is exactly "(locked)"
+    (case-insensitive): the tutor is fixed to this class. Same strict
+    rule: "(locked in)" or "(maybe locked)" are NOT recognised.
     """
     if pd.isna(cell):
         return []
@@ -88,9 +102,10 @@ def _split_candidate_entries(cell):
     for piece in pieces:
         notes = re.findall(r"\(([^)]*)\)", piece)
         is_cat = any(note.strip().lower() == "cat" for note in notes)
+        is_locked = any(note.strip().lower() == "locked" for note in notes)
         name = re.sub(r"\(.*?\)", "", piece).strip()
         if name:
-            entries.append((name, is_cat))
+            entries.append((name, is_cat, is_locked))
 
     return entries
 
@@ -421,10 +436,13 @@ def load_real_choices(file_path, sheet_name="Choices Round 1"):
 
         {
             "class_id": "PSY 300 E3L",
+            "subject": "PSY 300",
+            "section": "E3L",
             "tier_label": "Tier 1 EU",
             "tier_priority": 1,
             "candidates": [("Cassidy Rosenbaum", 1), ("Elizabeth Lanovaya", 1)],
             "cat_candidates": {"Elizabeth Lanovaya"},   # wrote "(CAT)" here
+            "locked_candidates": set(),                 # wrote "(locked)" here
             "link_group": "COMP 232 - A",               # None when blank / no column
         }
 
@@ -490,13 +508,16 @@ def load_real_choices(file_path, sheet_name="Choices Round 1"):
         # wins; on a tie, the entry WITHOUT (CAT) wins (it is the less
         # restrictive one).
         best_for_tutor = {}
+        locked_names = set()  # wrote "(locked)" next to their name for THIS class
 
         for choice_tier, column in enumerate(PREFERENCE_COLUMNS, start=1):
-            for raw_name, is_cat in _split_candidate_entries(row[column]):
+            for raw_name, is_cat, is_locked in _split_candidate_notes(row[column]):
                 name = canonicalize(raw_name)
                 entry = (choice_tier, is_cat)
                 if name not in best_for_tutor or entry < best_for_tutor[name]:
                     best_for_tutor[name] = entry
+                if is_locked:
+                    locked_names.add(name)
 
         if not best_for_tutor:
             continue  # no candidates at all - disregard this class
@@ -504,6 +525,8 @@ def load_real_choices(file_path, sheet_name="Choices Round 1"):
         classes.append(
             {
                 "class_id": class_id,
+                "subject": str(row["Subject"]).strip(),
+                "section": str(row["Section"]).strip(),
                 "tier_label": tier_label,
                 "tier_priority": tier_priority,
                 "candidates": sorted(
@@ -516,6 +539,9 @@ def load_real_choices(file_path, sheet_name="Choices Round 1"):
                 "cat_candidates": {
                     name for name, entry in best_for_tutor.items() if entry[1]
                 },
+                # Tutors who wrote "(locked)": fixed to this class, whoever
+                # else listed it. Applied by placement_service.
+                "locked_candidates": locked_names,
                 "link_group": (
                     _clean_link_group(row[link_group_column]) if link_group_column else None
                 ),
