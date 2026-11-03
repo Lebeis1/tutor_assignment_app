@@ -48,6 +48,25 @@
   .ccell > div { height:31px; display:flex; align-items:center; gap:6px; white-space:nowrap; }
   .ccell > div + div { margin-top:6px; }
   .lockico { font-size:12px; }
+  .pill.hrs-warn { border-color:var(--warn); background:var(--warn-soft); }
+  .pill.hrs-bad { border-color:var(--bad); background:var(--bad-soft, #fde8e8); }
+  .tcard.hours-warn { border-color:var(--warn); }
+  .meet { font-size:12px; color:var(--muted); margin-top:2px; }
+  button.cname { all:unset; cursor:pointer; font-weight:700; border-bottom:1px dotted var(--muted); }
+  button.cname:hover, button.cname:focus-visible { color:var(--accent); border-bottom-color:var(--accent); }
+  button.cname .caret { display:inline-block; width:14px; color:var(--muted); font-size:11px; }
+  tr.detailrow > td { background:var(--bg); padding:10px 14px 14px; }
+  .candhead { font-size:13px; font-weight:650; margin-bottom:8px; }
+  .cands { display:grid; grid-template-columns:repeat(auto-fill,minmax(270px,1fr)); gap:8px; }
+  .cand { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:8px 10px; font-size:13px; }
+  .cand.here { border-color:var(--ok); background:var(--ok-soft); }
+  .cand .top { display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
+  .cand .who { font-weight:650; font-size:14px; }
+  .cand .line { color:var(--muted); margin-top:3px; }
+  .cand .line.warn { color:var(--warn); } .cand .line.bad { color:var(--bad); }
+  .cand .acts { display:flex; gap:6px; flex-wrap:wrap; margin-top:7px; }
+  .cand .acts button { border:1px solid var(--line); background:var(--card); color:var(--accent); border-radius:6px; font:inherit; font-size:12px; cursor:pointer; padding:2px 9px; }
+  .cand .acts button:hover { border-color:var(--accent); background:var(--accent-soft); }
   .addzone { display:inline-flex; align-items:center; padding:3px 10px; border-radius:999px; border:1.5px dashed var(--muted); color:var(--muted);
              font-size:12px; font-weight:550; visibility:hidden; white-space:nowrap; }
   body.dragging .addzone, body.placing .addzone { visibility:visible; }
@@ -133,7 +152,7 @@
 </div>
 
 <section class="panel active" id="p-class">
-  <p class="howto">Drag a tutor&rsquo;s name onto another class to move them, or drop it in the tray below to set it aside. Dropping on a class that already has a tutor <b>replaces</b> them (the replaced tutor goes to the tray). To give a class <b>two tutors</b>, drop the name on the dashed &ldquo;+ add a 2nd tutor&rdquo; spot that appears beside the current tutor while you drag. You can also click a name in the tray, then click a class (or its &ldquo;+ add a 2nd tutor&rdquo; spot). A &#128274; means the tutor is locked to that class in your sheet. Any move is allowed; risky ones show a warning.</p>
+  <p class="howto">Drag a tutor&rsquo;s name onto another class to move them, or drop it in the tray below to set it aside. Dropping on a class that already has a tutor <b>replaces</b> them (the replaced tutor goes to the tray). To give a class <b>two tutors</b>, drop the name on the dashed &ldquo;+ add a 2nd tutor&rdquo; spot that appears beside the current tutor while you drag. You can also click a name in the tray, then click a class (or its &ldquo;+ add a 2nd tutor&rdquo; spot). A &#128274; means the tutor is locked to that class in your sheet. <b>Click a class name</b> to see everyone who listed that class. Any move is allowed; risky ones show a warning.</p>
   <div class="filters">
     <input class="search" type="search" placeholder="Filter by class or tutor&hellip;" id="filter">
     <label class="only-open"><input type="checkbox" id="only-open"> Show only open classes <span class="muted" id="open-count"></span></label>
@@ -193,6 +212,9 @@
   var selectedChip = null;
   var filterText = "";
   var onlyOpen = false;
+  var expanded = {};          // classId -> true while its "who listed this class" list is open
+  var weeklyMins = {};        // tutor -> minutes a week in classes (refreshed by loads())
+  var MAXM = DATA.max_minutes, WARNM = DATA.warn_minutes;
 
   function serialize() { return JSON.stringify([state.assign, state.extra, state.tray.map(function (c) { return c.name; })]); }
   function isDirty() { return serialize() !== lastSaved; }
@@ -226,11 +248,29 @@
   // Sections that share a Link Group and the same tutor count as ONE class.
   function slotKey(c) { return c.group ? "g:" + c.group : "c:" + c.id; }
   function loads() {
-    var sets = {};
+    var sets = {}, mins = {};
     classes.forEach(function (c) {
-      tutorsIn(c.id).forEach(function (t) { (sets[t] = sets[t] || {})[slotKey(c)] = c.id; });
+      tutorsIn(c.id).forEach(function (t) {
+        (sets[t] = sets[t] || {})[slotKey(c)] = c.id;
+        mins[t] = (mins[t] || 0) + (c.mins || 0);   // every section a tutor sits in adds its time
+      });
     });
+    weeklyMins = mins;
     return sets;
+  }
+  // 150 -> "2.5", 180 -> "3"
+  function fmtH(m) { var t = (m / 60).toFixed(1); return t.slice(-2) === ".0" ? t.slice(0, -2) : t; }
+  // A note about a tutor's weekly time in classes, or null when it is fine.
+  function hoursNote(t, mins) {
+    var m = mins === undefined ? (weeklyMins[t] || 0) : mins;
+    if (m > MAXM) return { k: "bad", text: t + " has " + fmtH(m) + " hours a week in classes (the limit is " + fmtH(MAXM) + ")" };
+    if (m > WARNM) return { k: "warn", text: t + " has " + fmtH(m) + " hours a week in classes (over " + fmtH(WARNM) + ")" };
+    return null;
+  }
+  function hoursWarnings() {
+    var out = [];
+    Object.keys(weeklyMins).sort().forEach(function (t) { var n = hoursNote(t); if (n) out.push([t, n]); });
+    return out;
   }
   function maxFor(t) { return tutorInfo[t] ? tutorInfo[t].max : 2; }
   function originallyTogether(c, t) {
@@ -329,7 +369,11 @@
         body.appendChild(h("tr", { class: "tierhead" }, h("td", { colSpan: 4, text: c.tier })));
       }
       var w = warningsFor(c, L);
-      var nameCell = h("td", null, h("b", { text: c.id }),
+      var isOpen = !!expanded[c.id];
+      var nameCell = h("td", null,
+        h("button", { class: "cname", type: "button", "data-expand": c.id, title: "Show everyone who listed this class", "aria-expanded": isOpen ? "true" : "false" },
+          h("span", { class: "caret", text: isOpen ? "\u25BE" : "\u25B8" }), c.id),
+        c.when ? h("div", { class: "meet", text: c.when === "ARR" ? "Arranged (no set time)" : c.when + (c.mins ? " \u00B7 " + fmtH(c.mins) + " h/week" : "") }) : null,
         c.group ? h("div", null, h("span", { class: "badge sm link", text: "linked: " + c.group, title: "Linked with " + c.siblings.concat(c.unstaffed).join(", ") })) : null,
         c.unstaffed.length ? h("div", { class: "muted", style: "font-size:12px", text: "also linked: " + c.unstaffed.join(", ") + " (no tutor names, not placed)" }) : null);
 
@@ -339,6 +383,8 @@
         [["main", state.assign[c.id]], ["extra", state.extra[c.id]]].forEach(function (pair) {
           if (!pair[1]) return;
           var p = pill(pair[1], { "data-src": "class", "data-class": c.id, "data-slot": pair[0] });
+          var hn = hoursNote(pair[1]);
+          if (hn) { p.classList.add(hn.k === "bad" ? "hrs-bad" : "hrs-warn"); p.title = hn.text; }
           if ((c.locked || []).indexOf(pair[1]) !== -1) p.insertBefore(h("span", { class: "lockico", title: "Locked to this class in your sheet", text: "\uD83D\uDD12" }), p.firstChild);
           p.appendChild(h("button", { class: "x", title: "Move to tray", type: "button", text: "×", "data-x": c.id, "data-slot": pair[0] }));
           box.appendChild(p);
@@ -371,10 +417,59 @@
       }
       var tr = h("tr", { class: "crow", "data-class": c.id }, nameCell, tutorCell, choiceCell, notes);
       body.appendChild(tr);
+      if (isOpen) body.appendChild(candidateRow(c));
     });
     if (!shown) {
       body.appendChild(h("tr", null, h("td", { colSpan: 4, class: "muted", text: onlyOpen && !q ? "No open classes right now." : "No classes match." })));
     }
+  }
+
+  // "Who listed this class": everyone who put their name on it, with what
+  // they would be holding if they took it.
+  function candidateRow(c) {
+    var names = Object.keys(c.cands).sort(function (a, b) {
+      return (c.cands[a] - c.cands[b]) || a.toLowerCase().localeCompare(b.toLowerCase());
+    });
+    var grid = h("div", { class: "cands" });
+    names.forEach(function (n) {
+      var here = isIn(c.id, n);
+      var others = classes.filter(function (x) { return x.id !== c.id && isIn(x.id, n); }).map(function (x) { return x.id; });
+      var mins = weeklyMins[n] || 0, after = here ? mins : mins + (c.mins || 0);
+      var info = tutorInfo[n];
+      var top = h("div", { class: "top" }, h("span", { class: "who", text: n }),
+        h("span", { class: "badge sm" + (c.cands[n] === 1 ? " ok" : ""), text: ORD[c.cands[n]] + " choice" }),
+        c.cat.indexOf(n) !== -1 ? h("span", { class: "badge warn sm", text: "CAT" }) : null,
+        (c.locked || []).indexOf(n) !== -1 ? h("span", { class: "badge sm", text: "\uD83D\uDD12 locked" }) : null,
+        info && info.seniority ? h("span", { class: "muted", style: "font-size:12px", text: info.seniority }) : null);
+      var status = here ? "Assigned to this class"
+        : others.length ? "Also in " + others.join(", ")
+        : "Not placed in any class yet";
+      var hn = hoursNote(n, after);
+      var hours = here ? fmtH(mins) + " h/week now" : fmtH(mins) + " h/week now, " + fmtH(after) + " with this class";
+      // One click to put this tutor on the class (no tray needed). Their other
+      // classes are left alone; whoever they replace goes to the tray.
+      var acts = null;
+      if (!here) {
+        var cur = tutorsIn(c.id);
+        var btn = function (label, mode, slot, tip) {
+          return h("button", { type: "button", text: label, title: tip, "data-pick": c.id, "data-tutor": n, "data-mode": mode, "data-slot": slot });
+        };
+        var first = function (name) { return name.split(" ")[0]; };
+        if (cur.length === 0) acts = h("div", { class: "acts" }, btn("Place here", "replace", "main", "Put " + n + " on this class"));
+        else if (cur.length === 1) acts = h("div", { class: "acts" },
+          btn("Replace " + first(cur[0]), "replace", "main", cur[0] + " goes to the tray"),
+          btn("Add as 2nd tutor", "add", "extra", "Keep " + cur[0] + " and add " + n));
+        else acts = h("div", { class: "acts" },
+          btn("Replace " + first(cur[0]), "replace", "main", cur[0] + " goes to the tray"),
+          btn("Replace " + first(cur[1]), "replace", "extra", cur[1] + " goes to the tray"));
+      }
+      grid.appendChild(h("div", { class: "cand" + (here ? " here" : "") }, top,
+        h("div", { class: "line", text: status }),
+        h("div", { class: "line" + (hn ? " " + hn.k : ""), text: hours + (hn && hn.k === "bad" ? " \u2014 over the limit" : "") }),
+        acts));
+    });
+    return h("tr", { class: "detailrow" },
+      h("td", { colSpan: 4 }, h("div", { class: "candhead", text: names.length + " tutor" + (names.length === 1 ? "" : "s") + " listed " + c.id }), grid));
   }
 
   function renderTutors(L) {
@@ -390,10 +485,13 @@
         var ch = c.cands[n];
         ul.appendChild(h("li", null, h("span", { text: c.id }), h("span", { class: "muted", text: ch ? ORD[ch] : "not listed" })));
       });
-      var info = tutorInfo[n];
-      return h("div", { class: "tcard" + (load > mx ? " over" : "") },
+      var info = tutorInfo[n], hn = hoursNote(n), mins = weeklyMins[n] || 0;
+      return h("div", { class: "tcard" + (load > mx || (hn && hn.k === "bad") ? " over" : hn ? " hours-warn" : "") },
         h("h3", { text: n }),
         h("span", { class: "muted", text: load + " of " + mx + " max" + (ids.length !== load ? " (" + ids.length + " sections)" : "") + (info && info.seniority ? " · " + info.seniority : "") }),
+        h("div", { style: "margin-top:4px" },
+          h("span", { class: "badge sm" + (hn ? (hn.k === "bad" ? " bad" : " warn") : ""), text: fmtH(mins) + " h/week in classes" }),
+          hn && hn.k === "bad" ? h("span", { class: "muted", style: "font-size:12px", text: " over the " + fmtH(MAXM) + "-hour limit" }) : null),
         ul);
     }
     placed.forEach(function (n) { grid.appendChild(card(n)); });
@@ -418,14 +516,14 @@
         h("thead", null, h("tr", null, h("th", { text: "Class" }), h("th", { text: "Tier" }), h("th", { text: "Tutors who listed it" }))), tb)));
     } else sec.appendChild(h("p", { class: "muted", text: "Every class has a tutor." }));
 
-    var warned = [];
+    var warned = hoursWarnings().map(function (p) { return [p[0] + " (hours)", p[1]]; });
     classes.forEach(function (c) { warningsFor(c, L).forEach(function (x) { warned.push([c.id, x]); }); });
     sec.appendChild(h("h2", { style: "margin-top:24px", text: "Warnings (" + warned.length + ")" }));
     if (warned.length) {
       var tb2 = h("tbody");
       warned.forEach(function (p) { tb2.appendChild(h("tr", null, h("td", null, h("b", { text: p[0] })), h("td", { text: p[1].text }))); });
       sec.appendChild(h("div", { class: "scroll" }, h("table", null,
-        h("thead", null, h("tr", null, h("th", { text: "Class" }), h("th", { text: "Warning" }))), tb2)));
+        h("thead", null, h("tr", null, h("th", { text: "Class / tutor" }), h("th", { text: "Warning" }))), tb2)));
     } else sec.appendChild(h("p", { class: "muted", text: "No warnings." }));
     document.getElementById("tab-attn").textContent = "Needs attention (" + (open.length + warned.length) + ")";
   }
@@ -463,7 +561,7 @@
     document.getElementById("s-filled").textContent = filled.length;
     document.getElementById("s-total").textContent = classes.length;
     document.getElementById("s-tutors").textContent = Object.keys(L).length;
-    document.getElementById("s-warn").textContent = warnCount;
+    document.getElementById("s-warn").textContent = warnCount + hoursWarnings().length;
     document.getElementById("s-cat").textContent = cat;
     document.getElementById("s-open").textContent = classes.length - filled.length;
     document.getElementById("choice-note").textContent =
@@ -613,6 +711,19 @@
 
   // ---- clicks ------------------------------------------------------------
   document.addEventListener("click", function (e) {
+    var pick = e.target.closest("[data-pick]");
+    if (pick) {
+      place(pick.getAttribute("data-pick"), pick.getAttribute("data-tutor"), { type: "new" },
+            pick.getAttribute("data-mode"), pick.getAttribute("data-slot"));
+      return;
+    }
+    var ex = e.target.closest("[data-expand]");
+    if (ex) {
+      var cid = ex.getAttribute("data-expand");
+      if (expanded[cid]) delete expanded[cid]; else expanded[cid] = true;
+      renderClasses(loads());
+      return;
+    }
     var x = e.target.closest("[data-x]");
     if (x) { toTray(x.getAttribute("data-x"), x.getAttribute("data-slot") || "main"); return; }
     var use = e.target.closest("[data-use]");
@@ -673,7 +784,7 @@
                           .concat(c.unstaffed.length ? ["Also linked, no tutor names so not placed: " + c.unstaffed.join(", ")] : []) };
       }),
       tutors: DATA.tutors.map(function (t) {
-        return { name: t.name, load: Object.keys(L[t.name] || {}).length, max: t.max,
+        return { name: t.name, load: Object.keys(L[t.name] || {}).length, max: t.max, minutes: weeklyMins[t.name] || 0,
                  classes: classes.filter(function (c) { return isIn(c.id, t.name); }).map(function (c) { return c.id; }) };
       }),
       tray: state.tray.map(function (c) { return c.name; }),

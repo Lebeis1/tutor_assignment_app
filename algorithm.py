@@ -16,6 +16,13 @@ PREFERENCE_SCORES = {1: 3, 2: 2, 3: 1}
 # load_tutor_info) rather than relying on this blanket default.
 DEFAULT_TUTOR_CAPACITY = 2
 
+# Weekly time a tutor spends in classes. No tutor is ever placed over
+# MAX_WEEKLY_MINUTES (12 hours); the results page warns above
+# WARN_WEEKLY_MINUTES (9 hours). Each class record carries its weekly
+# meeting time as "minutes" (a linked lecture+lab unit carries the sum).
+MAX_WEEKLY_MINUTES = 12 * 60
+WARN_WEEKLY_MINUTES = 9 * 60
+
 # Optional. If you have a Lead/Returning/New roster for these tutors,
 # pass it into match_real_choices(..., seniority_rank=your_dict) using
 # these same values. Until then, every tutor is treated as equal
@@ -42,7 +49,7 @@ def is_cat_placement(class_record, tutor_name):
 
 def match_real_choices_bruteforce(
     classes, seniority_rank=None, tutor_capacity=None, show_trace=False,
-    already_employed=frozenset(),
+    already_employed=frozenset(), tutor_minutes=None,
 ):
     """
     Choose which classes get filled and by whom, out of a list of
@@ -76,6 +83,10 @@ def match_real_choices_bruteforce(
     being used again, so the "employ every tutor" rule goes to tutors who
     still have nothing.
 
+    tutor_minutes: optional dict of tutor -> the most weekly class minutes
+    they may be given (default MAX_WEEKLY_MINUTES). A candidate whose
+    class would push them over is simply not allowed.
+
     A tutor can fill up to tutor_capacity[name] classes if given, or
     DEFAULT_TUTOR_CAPACITY otherwise. A class is only ever filled by one
     of its own actual candidates - never left empty by choice if a
@@ -94,6 +105,9 @@ def match_real_choices_bruteforce(
         seniority_rank = {}
     if tutor_capacity is None:
         tutor_capacity = {}
+    if tutor_minutes is None:
+        tutor_minutes = {}
+    minutes_used = {}
 
     priorities = sorted(set(TIER_FILL_PRIORITY.values()) | {c["tier_priority"] for c in classes})
 
@@ -176,11 +190,17 @@ def match_real_choices_bruteforce(
         for tutor_name, choice_tier in class_record["candidates"]:
             if tutor_load.get(tutor_name, 0) >= tutor_capacity.get(tutor_name, DEFAULT_TUTOR_CAPACITY):
                 continue
+            class_minutes = class_record.get("minutes", 0)
+            if minutes_used.get(tutor_name, 0) + class_minutes > tutor_minutes.get(
+                tutor_name, MAX_WEEKLY_MINUTES
+            ):
+                continue
 
             preference_points = PREFERENCE_SCORES[choice_tier]
             rank = seniority_rank.get(tutor_name, 0)
             cat_placement = is_cat_placement(class_record, tutor_name)
 
+            minutes_used[tutor_name] = minutes_used.get(tutor_name, 0) + class_minutes
             tutor_load[tutor_name] = tutor_load.get(tutor_name, 0) + 1
             assignment[class_record["class_id"]] = (tutor_name, choice_tier)
             filled_by_priority[tier_priority] += class_size
@@ -204,6 +224,7 @@ def match_real_choices_bruteforce(
 
             filled_by_priority[tier_priority] -= class_size
             del assignment[class_record["class_id"]]
+            minutes_used[tutor_name] -= class_minutes
             tutor_load[tutor_name] -= 1
             if tutor_load[tutor_name] == 0:
                 del tutor_load[tutor_name]
@@ -253,11 +274,14 @@ def match_real_choices_bruteforce(
     return results, best["key"]
 
 
-def match_real_choices_fast(
+def _match_by_assignment(
     classes, seniority_rank=None, tutor_capacity=None, tie_break_seed=None,
     already_employed=frozenset(),
 ):
     """
+    The weekly-hours limit is NOT applied here (see match_real_choices_fast,
+    which calls this and then checks it).
+
     Same priority rules and output as match_real_choices_bruteforce,
     but solved EXACTLY via weighted bipartite matching
     (scipy.optimize.linear_sum_assignment) instead of brute-force
@@ -434,6 +458,12 @@ def match_real_choices_fast(
         choice_tier = dict(classes[row]["candidates"])[tutor_name]
         assignment[classes[row]["class_id"]] = (tutor_name, choice_tier)
 
+    return _results_and_key(classes, assignment, priorities, seniority_rank, already_employed)
+
+
+def _results_and_key(classes, assignment, priorities, seniority_rank, already_employed):
+    """Turn {class_id: (tutor, choice_tier)} into result rows plus the
+    comparison key (the same for every solver, so keys are comparable)."""
     results = []
     filled_by_priority = {p: 0 for p in priorities}
     total_score = 0
@@ -484,9 +514,165 @@ def match_real_choices_fast(
     return results, key
 
 
+def _minutes_over_limit(classes, results, tutor_minutes):
+    """True if any tutor in `results` is over their weekly class-time limit."""
+    minutes_by_class = {c["class_id"]: c.get("minutes", 0) for c in classes}
+    used = {}
+    for r in results:
+        tutor = r["Assigned Tutor"]
+        if tutor:
+            used[tutor] = used.get(tutor, 0) + minutes_by_class[r["Class"]]
+    return any(m > tutor_minutes.get(t, MAX_WEEKLY_MINUTES) for t, m in used.items())
+
+
+def match_real_choices_fast(
+    classes, seniority_rank=None, tutor_capacity=None, tie_break_seed=None,
+    already_employed=frozenset(), tutor_minutes=None,
+):
+    """
+    The solver the app uses: the same priority rules as
+    match_real_choices_bruteforce, solved exactly, and no tutor is ever
+    given more than their weekly class-time limit.
+
+    tutor_minutes: optional dict of tutor -> most weekly class minutes
+    they may be given (default MAX_WEEKLY_MINUTES, i.e. 12 hours).
+
+    How: the limit only ever REMOVES options, so first solve without it
+    (instant, by weighted matching). If nobody ends up over their limit,
+    that answer is also the best answer under the limit and is returned.
+    Otherwise the problem is solved again exactly with an integer
+    program (see _match_with_limits), which handles the limit directly.
+    """
+    if tutor_minutes is None:
+        tutor_minutes = {}
+    results, key = _match_by_assignment(
+        classes, seniority_rank, tutor_capacity, tie_break_seed, already_employed
+    )
+    if not _minutes_over_limit(classes, results, tutor_minutes):
+        return results, key
+    return _match_with_limits(
+        classes, seniority_rank, tutor_capacity, tie_break_seed, already_employed, tutor_minutes
+    )
+
+
+def _match_with_limits(
+    classes, seniority_rank, tutor_capacity, tie_break_seed, already_employed, tutor_minutes
+):
+    """
+    Exact solution with the weekly-hours limit, as an integer program.
+
+    One yes/no variable per (class, candidate tutor). The same priority
+    levels as everywhere else are optimised ONE AT A TIME, in order:
+    after each level is solved its best value is locked in, so a later
+    level can never be improved at the cost of an earlier one. (Giant
+    combined weights are avoided on purpose: solvers only work to about
+    six significant digits, so levels are kept apart instead.)
+    """
+    import random as _random
+
+    import numpy as np
+    from scipy.optimize import LinearConstraint, milp
+    from scipy.sparse import lil_matrix
+
+    if seniority_rank is None:
+        seniority_rank = {}
+    if tutor_capacity is None:
+        tutor_capacity = {}
+    rng = _random.Random(tie_break_seed) if tie_break_seed is not None else None
+    already_employed = set(already_employed)
+
+    priorities = sorted(set(TIER_FILL_PRIORITY.values()) | {c["tier_priority"] for c in classes})
+    variables = []  # (class index, tutor, choice tier)
+    for i, record in enumerate(classes):
+        for tutor, choice_tier in record["candidates"]:
+            variables.append((i, tutor, choice_tier))
+    tutors = sorted({t for _, t, _ in variables})
+    n_x = len(variables)
+    n_var = n_x + len(tutors)  # one "tutor is newly employed" variable each
+    tutor_index = {t: n_x + k for k, t in enumerate(tutors)}
+
+    # --- constraints that always hold -----------------------------------
+    rows = len(classes) + 3 * len(tutors)
+    A = lil_matrix((rows, n_var))
+    lower = np.full(rows, -np.inf)
+    upper = np.zeros(rows)
+    r = 0
+    for i in range(len(classes)):
+        for col, (ci, _, _) in enumerate(variables):
+            if ci == i:
+                A[r, col] = 1
+        upper[r] = 1  # a class has at most one tutor
+        r += 1
+    for t in tutors:
+        for col, (ci, tt, _) in enumerate(variables):
+            if tt == t:
+                A[r, col] = 1
+                A[r + 1, col] = classes[ci].get("minutes", 0)
+                A[r + 2, col] = -1  # employed_t <= number of classes given to t
+        upper[r] = tutor_capacity.get(t, DEFAULT_TUTOR_CAPACITY)
+        upper[r + 1] = tutor_minutes.get(t, MAX_WEEKLY_MINUTES)
+        A[r + 2, tutor_index[t]] = 1
+        upper[r + 2] = 0
+        r += 3
+    base = [LinearConstraint(A.tocsr(), lower, upper)]
+    bounds = (0, 1)
+    integrality = np.ones(n_var)
+
+    def objective(fn):
+        vec = np.zeros(n_var)
+        for col, (ci, t, choice_tier) in enumerate(variables):
+            vec[col] = fn(classes[ci], t, choice_tier)
+        return vec
+
+    def size(c):
+        return c.get("size", 1)
+
+    stages = []
+    for p in priorities:
+        stages.append(objective(lambda c, t, k, p=p: size(c) if c["tier_priority"] == p else 0))
+    employed = np.zeros(n_var)
+    for t in tutors:
+        if t not in already_employed:
+            employed[tutor_index[t]] = 1
+    stages.append(employed)
+    stages.append(objective(lambda c, t, k: 0 if is_cat_placement(c, t) else size(c)))
+    stages.append(objective(lambda c, t, k: PREFERENCE_SCORES[k] * size(c)))
+    stages.append(
+        objective(lambda c, t, k: seniority_rank.get(t, 0) * PREFERENCE_SCORES[k] * size(c))
+    )
+    if rng is not None:
+        stages.append(objective(lambda c, t, k: rng.randint(1, 1000)))
+
+    constraints = list(base)
+    solution = None
+    for vec in stages:
+        outcome = milp(
+            c=-vec,
+            integrality=integrality,
+            bounds=bounds,
+            constraints=constraints,
+            options={"mip_rel_gap": 0, "time_limit": 60},
+        )
+        if outcome.status != 0 or outcome.x is None:
+            raise ValueError("Could not finish matching with the weekly hours limit.")
+        solution = outcome.x
+        best = int(round(float(vec @ solution)))
+        # Every objective here is a whole number, so "at least best - 0.5"
+        # means "at least best" without tripping over rounding error.
+        constraints = constraints + [
+            LinearConstraint(vec.reshape(1, -1), best - 0.5, np.inf)
+        ]
+
+    assignment = {}
+    for col, (ci, t, choice_tier) in enumerate(variables):
+        if solution[col] > 0.5:
+            assignment[classes[ci]["class_id"]] = (t, choice_tier)
+    return _results_and_key(classes, assignment, priorities, seniority_rank, already_employed)
+
+
 def find_alternative_optimal_assignments(
     classes, seniority_rank=None, tutor_capacity=None, num_attempts=40, related_sections=None,
-    already_employed=frozenset(),
+    already_employed=frozenset(), tutor_minutes=None,
 ):
     """
     Find every genuinely-tied-for-best tutor for each class, so a human
@@ -543,7 +729,8 @@ def find_alternative_optimal_assignments(
         related_sections = {}
 
     baseline_results, baseline_key = match_real_choices_fast(
-        classes, seniority_rank, tutor_capacity, already_employed=already_employed
+        classes, seniority_rank, tutor_capacity, already_employed=already_employed,
+        tutor_minutes=tutor_minutes,
     )
 
     options_by_class = {
@@ -564,7 +751,7 @@ def find_alternative_optimal_assignments(
     for seed in range(num_attempts):
         attempt_results, attempt_key = match_real_choices_fast(
             classes, seniority_rank, tutor_capacity, tie_break_seed=seed,
-            already_employed=already_employed,
+            already_employed=already_employed, tutor_minutes=tutor_minutes,
         )
 
         if attempt_key != baseline_key:

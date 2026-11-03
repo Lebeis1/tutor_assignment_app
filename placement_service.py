@@ -8,7 +8,9 @@ internals leak into the template.
 from link_groups import describe_groups, expand_results, solve_with_groups
 from algorithm import (
     DEFAULT_TUTOR_CAPACITY,
+    MAX_WEEKLY_MINUTES,
     SENIORITY_RANK,
+    WARN_WEEKLY_MINUTES,
     find_alternative_optimal_assignments,
     is_cat_placement,
 )
@@ -29,22 +31,31 @@ def _tier_sort_key(tier):
     return TIER_ORDER.index(tier) if tier in TIER_ORDER else len(TIER_ORDER)
 
 
+def _hours(minutes):
+    """Minutes as a short hours string: 150 -> "2.5", 180 -> "3"."""
+    text = f"{minutes / 60:.1f}"
+    return text[:-2] if text.endswith(".0") else text
+
+
 def _apply_locks(classes, capacities):
     """
     Work out the "(locked)" placements.
 
-    Returns (rows, notices, solver_capacity, locked_tutors, group_keys):
+    Returns (rows, notices, solver_capacity, solver_minutes, locked_tutors, group_keys):
       rows           - one result row per locked class, in the same shape
                        expand_results() produces (plus a second tutor and
                        the locked names).
       notices        - plain-language things worth a look.
       solver_capacity- Max Classes per tutor with locked classes already
                        subtracted, for the rest of the matching.
+      solver_minutes - each locked tutor's weekly class-time limit with the
+                       time of their locked classes already subtracted.
       locked_tutors  - everyone holding a locked class.
       group_keys     - Link Group keys that contain a locked section.
     """
     rows, notices = [], []
     held = {}  # tutor -> set of "class units" they are locked into
+    held_minutes = {}  # tutor -> weekly class minutes of their locked classes
     group_keys = set()
     group_notes = {}
 
@@ -62,6 +73,7 @@ def _apply_locks(classes, capacities):
             group_notes.setdefault(key, (label, []))[1].append((record["class_id"], kept[0]))
         for n in kept:
             held.setdefault(n, set()).add(key or record["class_id"])
+            held_minutes[n] = held_minutes.get(n, 0) + record.get("minutes", 0)
         if len(ordered) > 1:
             notices.append(
                 f"{record['class_id']}: {' and '.join(kept)} are both locked to this class, so "
@@ -113,7 +125,16 @@ def _apply_locks(classes, capacities):
             )
         solver_capacity[name] = max(0, limit - len(units))
 
-    return rows, notices, solver_capacity, set(held), group_keys
+    solver_minutes = {}
+    for name, used in held_minutes.items():
+        if used > MAX_WEEKLY_MINUTES:
+            notices.append(
+                f"{name}'s locked classes add up to {_hours(used)} hours a week, over the "
+                f"{_hours(MAX_WEEKLY_MINUTES)}-hour limit. All locks are kept."
+            )
+        solver_minutes[name] = max(0, MAX_WEEKLY_MINUTES - used)
+
+    return rows, notices, solver_capacity, solver_minutes, set(held), group_keys
 
 
 def run_placement(file_path):
@@ -136,8 +157,8 @@ def run_placement(file_path):
     # classes are taken out of the matching, each locked tutor's Max
     # Classes shrinks by what they are already holding, and they no
     # longer count as "a tutor still needing a first class".
-    locked_rows, lock_notices, solver_capacity, locked_tutors, locked_group_keys = _apply_locks(
-        classes, capacities
+    locked_rows, lock_notices, solver_capacity, solver_minutes, locked_tutors, locked_group_keys = (
+        _apply_locks(classes, capacities)
     )
     locked_ids = {r["Class"] for r in locked_rows}
     free_classes = [c for c in classes if c["class_id"] not in locked_ids]
@@ -146,11 +167,43 @@ def run_placement(file_path):
         free_classes, set(unstaffed_by_key) | locked_group_keys
     )
     notices = lock_notices + notices
+
+    unreadable = [
+        f"{c['class_id']} ({c['time_problem']})" for c in classes if c.get("time_problem")
+    ]
+    if unreadable:
+        notices.append(
+            "The meeting time could not be read for these classes, so they count as 0 hours "
+            "a week: " + ", ".join(unreadable) + "."
+        )
+
+    # Nobody is placed over the weekly class-time limit.
     solved = solve_with_groups(
         free_classes, seniority_rank, solver_capacity, group_info,
-        already_employed=frozenset(locked_tutors),
+        already_employed=frozenset(locked_tutors), tutor_minutes=solver_minutes,
     )
     section_rows = expand_results(solved["results"], solved["members_by_unit"]) + locked_rows
+
+    # Did the limit cost us any class? Solve once more with no limit and
+    # compare, so the page can say which classes stayed open because of it.
+    unlimited = solve_with_groups(
+        free_classes, seniority_rank, solver_capacity, group_info,
+        already_employed=frozenset(locked_tutors),
+        tutor_minutes={n: 10 ** 9 for c in classes for n, _ in c["candidates"]},
+    )
+    now_open = {r["Class"] for r in section_rows if not r["Assigned Tutor"]}
+    would_fill = {
+        r["Class"]
+        for r in expand_results(unlimited["results"], unlimited["members_by_unit"])
+        if r["Assigned Tutor"]
+    }
+    cost_of_limit = sorted(now_open & would_fill)
+    if cost_of_limit:
+        notices.append(
+            f"The {_hours(MAX_WEEKLY_MINUTES)}-hour weekly limit left "
+            f"{len(cost_of_limit)} class{'es' if len(cost_of_limit) != 1 else ''} open that "
+            "could otherwise have had a tutor: " + ", ".join(cost_of_limit) + "."
+        )
 
     # With an explicit Link Group column, that is the source of truth;
     # the older "looks related" guess is only used when the column is
@@ -168,6 +221,7 @@ def run_placement(file_path):
         tutor_capacity=solver_capacity,
         related_sections=related,
         already_employed=frozenset(locked_tutors),
+        tutor_minutes=solver_minutes,
     )
     alt_by_unit = {a["Class"]: a for a in alternatives}
     class_by_id = {c["class_id"]: c for c in classes}
@@ -203,6 +257,8 @@ def run_placement(file_path):
                 "class": sr["Class"],
                 "subject": record["subject"],
                 "section": record["section"],
+                "minutes": record.get("minutes", 0),
+                "meeting": record.get("meeting", ""),
                 "tier": sr["Tier"],
                 "tutor": sr["Assigned Tutor"],
                 "choice": sr["Their Choice"],
@@ -236,6 +292,7 @@ def run_placement(file_path):
             "classes": sorted(items, key=lambda x: x["class"]),
             # A lecture+lab kept together uses ONE slot, so count units.
             "load": len({i["unit"] for i in items}),
+            "minutes": sum(i["minutes"] for i in items),
             "max": capacities.get(name, 2),
             "seniority": seniority_labels.get(name, ""),
         }
@@ -278,6 +335,8 @@ def run_placement(file_path):
                 "locked": r["locked"],
                 "subject": r["subject"],
                 "section": r["section"],
+                "mins": r["minutes"],
+                "when": r["meeting"],
                 "group": record.get("link_group") if (siblings or unstaffed) else None,
                 "siblings": siblings,
                 "unstaffed": unstaffed,
@@ -292,7 +351,14 @@ def run_placement(file_path):
     ]
 
     return {
-        "payload": {"classes": payload_classes, "tutors": payload_tutors, "tier_order": TIER_ORDER, "canceled": canceled},
+        "payload": {
+            "classes": payload_classes,
+            "tutors": payload_tutors,
+            "tier_order": TIER_ORDER,
+            "canceled": canceled,
+            "max_minutes": MAX_WEEKLY_MINUTES,
+            "warn_minutes": WARN_WEEKLY_MINUTES,
+        },
         "rows": rows,
         "unfilled": unfilled,
         "tutors": tutors,

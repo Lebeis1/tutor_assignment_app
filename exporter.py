@@ -7,6 +7,10 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
 CHOICE_LABELS = {1: "1st choice", 2: "2nd choice", 3: "3rd choice"}
+# Same limits the results page uses: warn above 9 hours a week in classes,
+# never above 12 (in minutes).
+WARN_MINUTES = 9 * 60
+MAX_MINUTES = 12 * 60
 MAX_ROWS = 2000
 
 
@@ -70,6 +74,7 @@ def validate_export_request(data):
                     "name": _text(item["name"]),
                     "load": int(item.get("load") or 0),
                     "max": int(item.get("max") or 0),
+                    "minutes": int(item.get("minutes") or 0),
                     "classes": [_text(c) for c in (item.get("classes") or [])[:50]],
                 }
             )
@@ -91,6 +96,7 @@ def build_workbook(request):
     header_fill = PatternFill("solid", fgColor="2F5BEA")
     open_fill = PatternFill("solid", fgColor="FDE7E5")
     changed_fill = PatternFill("solid", fgColor="E8EEFE")
+    warn_fill = PatternFill("solid", fgColor="FDF0D5")
 
     def style_header(sheet, widths):
         for col, width in enumerate(widths, start=1):
@@ -131,20 +137,28 @@ def build_workbook(request):
 
     # --- By Tutor ---------------------------------------------------------
     sheet = wb.create_sheet("By Tutor")
-    for col, name in enumerate(["Tutor", "Classes Held", "Max Classes", "Classes"], start=1):
+    for col, name in enumerate(["Tutor", "Classes Held", "Max Classes", "Hours Per Week", "Classes"], start=1):
         sheet.cell(row=1, column=col, value=name)
     tutors = sorted(request["tutors"], key=lambda t: t["name"].lower())
     for r, tutor in enumerate(tutors, start=2):
         _put(sheet, r, 1, tutor["name"])
         sheet.cell(row=r, column=2, value=tutor["load"])
         sheet.cell(row=r, column=3, value=tutor["max"])
-        _put(sheet, r, 4, ", ".join(tutor["classes"]))
+        hours = round(tutor["minutes"] / 60, 2)
+        sheet.cell(row=r, column=4, value=hours)
+        _put(sheet, r, 5, ", ".join(tutor["classes"]))
         if tutor["load"] == 0:
-            for c in range(1, 5):
+            for c in range(1, 6):
                 sheet.cell(row=r, column=c).fill = open_fill
         elif tutor["load"] > tutor["max"]:
             sheet.cell(row=r, column=2).font = Font(bold=True, color="B42318")
-    style_header(sheet, [28, 14, 14, 90])
+        if tutor["minutes"] > MAX_MINUTES:
+            sheet.cell(row=r, column=4).font = Font(bold=True, color="B42318")
+            sheet.cell(row=r, column=4).fill = open_fill
+        elif tutor["minutes"] > WARN_MINUTES:
+            sheet.cell(row=r, column=4).font = Font(bold=True, color="9A5B00")
+            sheet.cell(row=r, column=4).fill = warn_fill
+    style_header(sheet, [28, 14, 14, 16, 90])
 
     # --- Summary ----------------------------------------------------------
     sheet = wb.create_sheet("Summary")
@@ -163,6 +177,9 @@ def build_workbook(request):
         ("CAT placements", sum(1 for r in rows if r["cat"]) + sum(1 for r in rows if r["tutor2"] and r["cat2"])),
         ("Classes changed by you", sum(1 for r in rows if r["changed"])),
         ("Tutors with no class", sum(1 for t in tutors if t["load"] == 0)),
+        ("Tutors over 9 hours a week in classes",
+         sum(1 for t in tutors if WARN_MINUTES < t["minutes"] <= MAX_MINUTES)),
+        ("Tutors over the 12-hour limit", sum(1 for t in tutors if t["minutes"] > MAX_MINUTES)),
         ("Names still in the tray (not placed)", ", ".join(request["tray"]) or "None"),
         ("Canceled classes skipped (struck through)", ", ".join(request["canceled"]) or "None"),
     ]

@@ -47,6 +47,55 @@ def _find_header_row(raw):
     return header_row
 
 
+_DAY_TOKEN = re.compile(r"SU|TH|M|T|W|F|S")
+_TIME_RANGE = re.compile(
+    r"^\s*(\d{1,2}):(\d{2})\s*([AP])\.?M\.?\s*[-\u2013\u2014]\s*(\d{1,2}):(\d{2})\s*([AP])\.?M\.?\s*$",
+    re.IGNORECASE,
+)
+
+
+def _clock_minutes(hour, minute, meridiem):
+    hour = int(hour) % 12
+    if meridiem.upper() == "P":
+        hour += 12
+    return hour * 60 + int(minute)
+
+
+def parse_weekly_minutes(days, time_text):
+    """
+    How many minutes per week a class meets, from the sheet's "Day(s)"
+    and "Time" cells: the length of one meeting times the number of
+    meeting days ("MW 01:30 PM - 02:45 PM" = 2 x 75 = 150 minutes).
+
+    Returns (minutes, problem). A class with no scheduled meeting time
+    (blank, or days "ARR" for "arranged", as asynchronous classes have)
+    counts as 0 minutes with no problem. If a meeting time is present
+    but can't be understood, it counts as 0 minutes and problem is a
+    short plain-language reason, so the page can tell the user.
+    """
+    day_text = "" if pd.isna(days) else str(days).strip().upper().replace(" ", "")
+    time_cell = "" if pd.isna(time_text) else str(time_text).strip()
+
+    if day_text in ("ARR", "TBA", "TBD"):
+        return 0, None  # arranged: no fixed weekly meeting time
+    if day_text == "" and not time_cell:
+        return 0, None
+
+    tokens = _DAY_TOKEN.findall(day_text)
+    if not tokens or "".join(tokens) != day_text:
+        return 0, f"days {day_text or '(blank)'!r} not understood"
+    if not time_cell:
+        return 0, "no meeting time"
+    match = _TIME_RANGE.match(time_cell)
+    if not match:
+        return 0, f"time {time_cell!r} not understood"
+    start = _clock_minutes(match.group(1), match.group(2), match.group(3))
+    end = _clock_minutes(match.group(4), match.group(5), match.group(6))
+    if end <= start:
+        return 0, f"time {time_cell!r} ends before it starts"
+    return (end - start) * len(set(tokens)), None
+
+
 def _split_candidate_entries(cell):
     """
     Split a "1st Choice"-style cell into (tutor_name, is_cat) pairs.
@@ -443,6 +492,8 @@ def load_real_choices(file_path, sheet_name="Choices Round 1"):
             "candidates": [("Cassidy Rosenbaum", 1), ("Elizabeth Lanovaya", 1)],
             "cat_candidates": {"Elizabeth Lanovaya"},   # wrote "(CAT)" here
             "locked_candidates": set(),                 # wrote "(locked)" here
+            "minutes": 150,                             # weekly meeting minutes (0 if none)
+            "meeting": "MW 01:30 PM - 02:45 PM",        # as written in the sheet
             "link_group": "COMP 232 - A",               # None when blank / no column
         }
 
@@ -522,9 +573,19 @@ def load_real_choices(file_path, sheet_name="Choices Round 1"):
         if not best_for_tutor:
             continue  # no candidates at all - disregard this class
 
+        day_cell = row["Day(s)"] if "Day(s)" in dataframe.columns else None
+        time_cell = row["Time"] if "Time" in dataframe.columns else None
+        minutes, time_problem = parse_weekly_minutes(day_cell, time_cell)
+        meeting = " ".join(
+            str(v).strip() for v in (day_cell, time_cell) if not pd.isna(v) and str(v).strip()
+        )
+
         classes.append(
             {
                 "class_id": class_id,
+                "minutes": minutes,
+                "meeting": meeting,
+                "time_problem": time_problem,
                 "subject": str(row["Subject"]).strip(),
                 "section": str(row["Section"]).strip(),
                 "tier_label": tier_label,

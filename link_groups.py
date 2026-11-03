@@ -149,6 +149,9 @@ def build_unit_classes(classes, split_keys=frozenset(), group_info=None):
                 "cat_candidates": set().union(*(m["cat_candidates"] for m in members))
                 & group["full_tutors"],
                 "size": len(members),
+                # Weekly class time of a linked family: the tutor attends
+                # every section, so the times add up.
+                "minutes": sum(m.get("minutes", 0) for m in members),
                 "link_group": group["label"],
             }
         )
@@ -159,7 +162,7 @@ def build_unit_classes(classes, split_keys=frozenset(), group_info=None):
 
 def solve_with_groups(
     classes, seniority_rank=None, tutor_capacity=None, group_info=None,
-    already_employed=frozenset(),
+    already_employed=frozenset(), tutor_minutes=None,
 ):
     """
     Solve with Link Groups. Starts with every mergeable family kept
@@ -182,7 +185,8 @@ def solve_with_groups(
     def solve(split_keys):
         units, members = build_unit_classes(classes, split_keys, group_info)
         results, key = match_real_choices_fast(
-            units, seniority_rank, tutor_capacity, already_employed=already_employed
+            units, seniority_rank, tutor_capacity, already_employed=already_employed,
+            tutor_minutes=tutor_minutes,
         )
         return units, members, results, key
 

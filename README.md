@@ -67,10 +67,15 @@ files only.
 
 - **By class:** every class with its assigned tutor, which choice (1st, 2nd,
   3rd) that was for the tutor, warnings, and any other equally good options.
-  Filter by class or tutor name, or tick "Show only open classes".
-- **By tutor:** a read-only summary of each tutor's classes and load, plus the
-  tutors who have no class yet.
-- **Needs attention:** open classes and warnings in one place.
+  Filter by class or tutor name, or tick "Show only open classes". Each class
+  shows when it meets and how many hours a week that is. **Click a class name**
+  to open a list of everyone who listed it: their choice rank, CAT or lock
+  marks, where else they are placed, and their weekly hours now and with this
+  class added.
+- **By tutor:** a read-only summary of each tutor's classes, load and weekly
+  hours, plus the tutors who have no class yet.
+- **Needs attention:** open classes and warnings in one place, including tutors
+  with a lot of weekly hours.
 - Notices at the top for things worth checking in the file (for example a Link
   Group label used only once).
 
@@ -98,8 +103,10 @@ files only.
   unsaved changes.
 - **Export to Excel** downloads exactly what is on screen, including your edits.
   The Assignments sheet has the course (for example `MATH 300`) and its section
-  (for example `2`) in separate columns, plus columns for a second tutor. The file also has a By Tutor sheet and a Summary sheet (with
-  tray names and skipped canceled classes).
+  (for example `2`) in separate columns, plus columns for a second tutor. The
+  By Tutor sheet includes each tutor's weekly hours in classes (amber over 9,
+  red over 12). The Summary sheet has the tray names and skipped canceled
+  classes.
 
 ## Excel Input Format
 
@@ -114,9 +121,10 @@ header row by looking for the last row that contains both "1st Choice" and
 | First column | Tier of the class (see below) |
 | `1st Choice`, `2nd Choice`, `3rd Choice` | Tutor names. Several names may share one cell, separated by commas |
 | `Subject`, `Section` | Together identify the class, e.g. `PSY 300` + `E3L`. The export keeps them in separate columns |
+| `Day(s)`, `Time` | When the class meets, e.g. `MW` and `01:30 PM - 02:45 PM`. Used for weekly hours (see below) |
 | `Link Group` (optional) | Label that ties a lecture and its lab(s) together |
 
-Other columns (day, time, instructor, and so on) are ignored.
+Other columns (instructor, building, and so on) are ignored.
 
 **`Tutors` sheet** (optional). One row per tutor:
 
@@ -164,6 +172,27 @@ if another tutor ranked it higher.
 - On the results page a locked tutor shows a lock icon, and moving them away
   shows a warning.
 
+### Weekly hours in classes
+
+Each class has a weekly meeting time: the length of one meeting times the number
+of meeting days. `MW 01:30 PM - 02:45 PM` is 2.5 hours a week. A tutor's weekly
+hours are the total of every section they are placed in. A linked lecture and
+lab both count, and each of two tutors on a class counts it.
+
+- **Limit: no tutor is ever placed over 12 hours a week.** The draft is the best
+  assignment that respects this. If the limit leaves a class open that would
+  otherwise have a tutor, a notice names it.
+- **Warning above 9 hours.** The tutor's name turns amber wherever it appears,
+  and the tutor is listed under "Needs attention" and on their card on the
+  By tutor tab. Above 12 (possible after you move people by hand, or from locks)
+  it turns red.
+- Classes with days `ARR` (arranged) or no time, such as asynchronous classes,
+  count as 0 hours. A time the app cannot read also counts as 0 hours, and a
+  notice lists those classes.
+- Locked classes count toward a tutor's hours. If locks alone are over 12, they
+  are all kept and a notice says so.
+- Overlapping class times are not checked.
+
 ### Canceled classes
 
 A class whose Subject or Section cell is struck through in Excel is treated as
@@ -189,7 +218,8 @@ example `PSY 300 - A` on a lecture and its lab(s).
 The app finds the best assignment under these rules, in this order of
 importance:
 
-0. Locked tutors (`(locked)`) are placed first, as the sheet says.
+0. Locked tutors (`(locked)`) are placed first, as the sheet says. No tutor goes
+   over 12 hours a week in classes.
 1. Only tutors' listed choices are used. Classes with no tutor names stay open.
 2. Higher tiers are filled first, and a higher tier always wins over a lower one.
 3. As many tutors as possible get at least one class.
@@ -197,8 +227,9 @@ importance:
 5. Higher preference scores are better (1st choice = 3, 2nd = 2, 3rd = 1).
 6. Seniority (Lead, then Returning, then New) only breaks remaining ties.
 
-No tutor gets more than their Max Classes. The matching is solved exactly with
-SciPy's `linear_sum_assignment`, so the draft is the true optimum under these
+No tutor gets more than their Max Classes. The matching is solved exactly (with
+SciPy's `linear_sum_assignment`, or SciPy's integer-programming solver when the
+12-hour limit gets in the way), so the draft is the true optimum under these
 rules, not an approximation.
 
 "Other equally good options" appear on a class only when another tutor could
