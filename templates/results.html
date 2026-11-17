@@ -116,8 +116,8 @@
 {% block content %}
 <div class="top">
   <div>
-    <h1>Draft placements <span class="badge warn unsaved" id="unsaved">edited &mdash; not exported</span></h1>
-    <p class="lead" style="margin:0">From <b>{{ filename }}</b> &mdash; a starting point to review and adjust.</p>
+    <h1>Draft placements <span class="badge warn unsaved" id="unsaved">edited; not exported</span></h1>
+    <p class="lead" style="margin:0">From <b>{{ filename }}</b> </p>
   </div>
   <div><a class="btn ghost" href="/" id="newfile">Upload another file</a></div>
 </div>
@@ -152,7 +152,7 @@
 </div>
 
 <section class="panel active" id="p-class">
-  <p class="howto">Drag a tutor&rsquo;s name onto another class to move them, or drop it in the tray below to set it aside. Dropping on a class that already has a tutor <b>replaces</b> them (the replaced tutor goes to the tray). To give a class <b>two tutors</b>, drop the name on the dashed &ldquo;+ add a 2nd tutor&rdquo; spot that appears beside the current tutor while you drag. You can also click a name in the tray, then click a class (or its &ldquo;+ add a 2nd tutor&rdquo; spot). A &#128274; means the tutor is locked to that class in your sheet. <b>Click a class name</b> to see everyone who listed that class. Any move is allowed; risky ones show a warning.</p>
+  <p class="howto">Drag a tutor&rsquo;s name onto another class to move them, or drop it in the tray below to set it aside. Dropping on a class that already has a tutor <b>replaces</b> them (the replaced tutor goes to the tray). To give a class <b>two tutors</b>, drop the name on the dashed &ldquo;+ add a 2nd tutor&rdquo; spot that appears beside the current tutor while you drag. You can also click a name in the tray, then click a class (or its &ldquo;+ add a 2nd tutor&rdquo; spot). A &#128274; means the tutor is locked to that class in your sheet. <b>Click a class name</b> to see everyone who listed that class.</p>
   <div class="filters">
     <input class="search" type="search" placeholder="Filter by class or tutor&hellip;" id="filter">
     <label class="only-open"><input type="checkbox" id="only-open"> Show only open classes <span class="muted" id="open-count"></span></label>
@@ -173,7 +173,7 @@
 <div id="tray" aria-label="Tray of tutors waiting for a class">
   <div class="inner">
     <div class="bar">
-      <b>Tray <span class="muted" style="font-weight:400">&mdash; names waiting for a class (drop one here to set it aside)</span></b>
+      <b>Tray <span class="muted" style="font-weight:400">; names waiting for a class (drop one here to set it aside)</span></b>
       <div class="tools">
         <select class="add" id="add-tutor" aria-label="Add a tutor to the tray"></select>
         <button class="btn ghost small" id="undo" disabled>Undo</button>
