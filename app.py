@@ -1,8 +1,10 @@
+import hmac
+import os
 import time
 from pathlib import Path
 from uuid import uuid4
 
-from flask import Flask, jsonify, render_template, request, send_file
+from flask import Flask, Response, jsonify, render_template, request, send_file
 
 from exporter import build_workbook, validate_export_request
 from io import BytesIO
@@ -10,6 +12,31 @@ from placement_service import run_placement
 
 
 app = Flask(__name__)
+
+
+# ---- password protection -----------------------------------------------------
+APP_PASSWORD = os.environ.get("APP_PASSWORD", "")
+RUNNING_ON_RENDER = bool(os.environ.get("RENDER"))
+
+
+@app.before_request
+def require_password():
+    if not APP_PASSWORD:
+        if RUNNING_ON_RENDER:
+            return Response(
+                "This app is locked until an APP_PASSWORD is set on the server.",
+                503,
+            )
+        return None
+    auth = request.authorization
+    supplied = (auth.password or "") if auth else ""
+    if hmac.compare_digest(supplied.encode(), APP_PASSWORD.encode()):
+        return None
+    return Response(
+        "Password required.",
+        401,
+        {"WWW-Authenticate": 'Basic realm="LRC Tutor Placement"'},
+    )
 
 PROJECT_FOLDER = Path(__file__).parent
 UPLOAD_FOLDER = PROJECT_FOLDER / "uploads"
